@@ -1,0 +1,54 @@
+name: 'Export AS Library'
+description: >
+  Exports a compiled B&R Automation Studio library into the standard Loupe
+  distribution layout (SG3/, SGC/, SG4/, SG4/Arm/, Binary.lby, headers).
+  The project must have been built before calling this action.
+author: 'Loupe'
+
+inputs:
+  project-dir:
+    description: 'Path to the AS project directory (the folder containing the .apj file)'
+    required: true
+  library:
+    description: 'Library name to export (e.g. StringExt — must match the folder/lby name)'
+    required: true
+  library-dir:
+    description: >
+      Path to the library source directory (containing the .lby file and source files).
+      If omitted the action will search under project-dir/Logical/ automatically.
+    required: false
+    default: ''
+  configs:
+    description: 'Space-separated configuration names to include (e.g. "Intel ARM")'
+    required: true
+  output:
+    description: 'Output directory. The library is written to output/{library}/{version}/'
+    required: true
+  as-install:
+    description: >
+      Automation Studio 6 installation directory (output of find-as6-build install-path).
+      Used for ARM architecture detection. Leave empty to skip ARM detection.
+    required: false
+    default: ''
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Export ${{ inputs.library }}
+      shell: pwsh
+      run: |
+        $libDirArg = if ("${{ inputs.library-dir }}" -ne '') {
+          "--library-dir `"${{ inputs.library-dir }}`""
+        } else { "" }
+        $asInstallArg = if ("${{ inputs.as-install }}" -ne '') {
+          "--as-install `"${{ inputs.as-install }}`""
+        } else { "" }
+
+        $cmd = "python `"${{ github.action_path }}/export_as_library.py`" " +
+               "--project-dir `"${{ inputs.project-dir }}`" " +
+               "--library `"${{ inputs.library }}`" " +
+               "--configs `"${{ inputs.configs }}`" " +
+               "--output `"${{ inputs.output }}`" " +
+               "$libDirArg $asInstallArg"
+        Invoke-Expression $cmd
+        if ($LASTEXITCODE -ne 0) { exit 1 }

@@ -1,0 +1,34 @@
+name: 'Find AS6 Build Executable'
+description: >
+  Locates BR.AS.Build.exe for Automation Studio 6 on Windows runners that may
+  have multiple AS versions installed. Outputs the exe path and install directory.
+author: 'Loupe'
+
+outputs:
+  exe-path:
+    description: 'Full path to BR.AS.Build.exe'
+    value: ${{ steps.find.outputs.exe-path }}
+  install-path:
+    description: 'Automation Studio 6 installation directory (parent of Bin-en/)'
+    value: ${{ steps.find.outputs.install-path }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Find AS6 build executable
+      id: find
+      shell: pwsh
+      run: |
+        $output = python "${{ github.action_path }}/find_as6_build.py"
+        if ($LASTEXITCODE -ne 0) {
+          Write-Error "Could not locate BR.AS.Build.exe for Automation Studio 6."
+          Write-Error "Set the BR_AS6_BUILD_PATH environment variable on the runner to override."
+          exit 1
+        }
+        $lines = ($output -split "`n") | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne '' }
+        $exePath    = $lines[0]
+        $installPath = $lines[1]
+        "exe-path=$exePath"      | Out-File -Append -Encoding utf8 -FilePath $env:GITHUB_OUTPUT
+        "install-path=$installPath" | Out-File -Append -Encoding utf8 -FilePath $env:GITHUB_OUTPUT
+        Write-Host "BR.AS.Build.exe : $exePath"
+        Write-Host "AS6 install dir : $installPath"

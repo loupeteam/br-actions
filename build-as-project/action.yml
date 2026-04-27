@@ -1,0 +1,33 @@
+name: 'Build AS Project'
+description: >
+  Builds a B&R Automation Studio 6 project for a single configuration using
+  BR.AS.Build.exe. Handles the quirk where BR.AS.Build.exe exits with code 1
+  on warnings-only builds — only actual errors cause a workflow failure.
+author: 'Loupe'
+
+inputs:
+  exe-path:
+    description: 'Full path to BR.AS.Build.exe (output of find-as6-build action)'
+    required: true
+  project:
+    description: 'Path to the .apj project file, relative to the workspace root'
+    required: true
+  config:
+    description: 'Configuration name to build (e.g. Intel, ARM)'
+    required: true
+  build-mode:
+    description: 'Build mode passed to -buildMode: Build or Rebuild'
+    required: false
+    default: 'Build'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Build ${{ inputs.config }}
+      shell: pwsh
+      run: |
+        python "${{ github.action_path }}/build_as_project.py" `
+          --exe      "${{ inputs.exe-path }}" `
+          --project  "${{ inputs.project }}" `
+          --config   "${{ inputs.config }}" `
+          --build-mode "${{ inputs.build-mode }}"
