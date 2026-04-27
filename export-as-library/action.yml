@@ -37,18 +37,25 @@ runs:
     - name: Export ${{ inputs.library }}
       shell: pwsh
       run: |
-        $libDirArg = if ("${{ inputs.library-dir }}" -ne '') {
-          "--library-dir `"${{ inputs.library-dir }}`""
+        # Resolve relative paths against the workspace root
+        function Resolve-WorkspacePath($p) {
+          if ([System.IO.Path]::IsPathRooted($p)) { $p } else { Join-Path "${{ github.workspace }}" $p }
+        }
+
+        $projectDir  = Resolve-WorkspacePath "${{ inputs.project-dir }}"
+        $outputDir   = Resolve-WorkspacePath "${{ inputs.output }}"
+        $libDirArg   = if ("${{ inputs.library-dir }}" -ne '') {
+          "--library-dir `"$(Resolve-WorkspacePath '${{ inputs.library-dir }}')`""
         } else { "" }
         $asInstallArg = if ("${{ inputs.as-install }}" -ne '') {
-          "--as-install `"${{ inputs.as-install }}`""
+          "--as-install `"$(Resolve-WorkspacePath '${{ inputs.as-install }}')`""
         } else { "" }
 
-        $cmd = "python `"${{ github.action_path }}/export_as_library.py`" " +
-               "--project-dir `"${{ inputs.project-dir }}`" " +
+        $cmd = "python -u `"${{ github.action_path }}/export_as_library.py`" " +
+               "--project-dir `"$projectDir`" " +
                "--library `"${{ inputs.library }}`" " +
                "--configs `"${{ inputs.configs }}`" " +
-               "--output `"${{ inputs.output }}`" " +
+               "--output `"$outputDir`" " +
                "$libDirArg $asInstallArg"
         Invoke-Expression $cmd
         if ($LASTEXITCODE -ne 0) { exit 1 }

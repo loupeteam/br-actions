@@ -28,6 +28,6 @@ runs:
       run: |
         python -u "${{ github.action_path }}/build_as_project.py" `
           --exe      "${{ inputs.exe-path }}" `
-          --project  "${{ inputs.project }}" `
+          --project  "${{ github.workspace }}/${{ inputs.project }}" `
           --config   "${{ inputs.config }}" `
           --build-mode "${{ inputs.build-mode }}"

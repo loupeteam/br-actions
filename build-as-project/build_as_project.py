@@ -35,6 +35,16 @@ def build(exe_path: str, project_apj: str, config: str, build_mode: str = 'Build
 
     combined = ''.join(output_lines)
 
+    # If no build summary line is present, BR.AS.Build.exe printed usage/help and
+    # didn't build at all (bad exe path, bad project path, or unsupported argument).
+    if not re.search(r'\b\d+ error\(s\)', combined):
+        print(
+            '::error::BR.AS.Build.exe produced no build summary — '
+            'check the exe path, project path, and config name',
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
     # BR.AS.Build.exe reports errors as "N error(s)" in its summary line.
     # Exit code 1 alone is not sufficient (it also appears on warnings-only builds).
     error_match = re.search(r'\b([1-9]\d*) error\(s\)', combined)
