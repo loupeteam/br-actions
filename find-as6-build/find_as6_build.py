@@ -84,12 +84,7 @@ def find_as6():
         install = os.path.dirname(os.path.dirname(env_path))  # strip \Bin-en\BR.AS.Build.exe
         return env_path, install
 
-    # 2. Windows registry
-    exe, install = _find_in_registry()
-    if exe:
-        return exe, install
-
-    # 3. Common fallback paths
+    # 2. Common install paths (checked before registry to avoid slow enumeration)
     fallbacks = [
         r'C:\BrAutomation\AS6',
         r'C:\Program Files (x86)\BRAutomation\AS6',
@@ -98,6 +93,13 @@ def find_as6():
         exe = os.path.join(install, 'Bin-en', 'BR.AS.Build.exe')
         if os.path.isfile(exe):
             return exe, install
+
+    # 3. Windows registry — only reached for non-standard install locations.
+    #    Enumerates all subkeys of HKLM\SOFTWARE\WOW6432Node, which can be slow
+    #    on machines with many installed programs.
+    exe, install = _find_in_registry()
+    if exe:
+        return exe, install
 
     return None, None
 
