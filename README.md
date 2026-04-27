@@ -13,7 +13,7 @@ Reusable GitHub Actions composite actions for building and exporting
 
 ## Requirements
 
-- Self-hosted Windows runner with Automation Studio 6 installed
+- Windows runner with Automation Studio 6 installed
 - Python 3.x available on the runner PATH (or via `actions/setup-python` in the calling workflow)
 
 ## Usage
