@@ -137,6 +137,15 @@ def _get_cpu_architecture(
         return target
 
     if target == 'SG4':
+        # Most reliable: read the ELF e_machine field from a compiled object
+        # file. ashwd.br.tmp.xml is generated for IA32 builds too, so the
+        # board-config heuristic alone wrongly classifies Intel as ARM when
+        # the AS install path or board file isn't available.
+        if library_name:
+            elf_arch = _sniff_elf_arch(project_dir, config_name, cpu_name, library_name)
+            if elf_arch is not None:
+                return elf_arch
+
         # Check for ARM hardware descriptor generated during build
         ashwd = os.path.join(
             project_dir, 'Temp', 'Objects', config_name, cpu_name, 'ashwd.br.tmp.xml'
@@ -156,12 +165,7 @@ def _get_cpu_architecture(
             return 'SG4'
 
         if not hw_name or not as_install:
-            # Without AS install path, sniff the ELF header of a compiled object file
-            if library_name:
-                elf_arch = _sniff_elf_arch(project_dir, config_name, cpu_name, library_name)
-                if elf_arch is not None:
-                    return elf_arch
-            # Fall back: ashwd exists but architecture unconfirmed — assume ARM
+            # ashwd exists but no AS install path to confirm — assume ARM
             return 'SG4_ARM'
 
         # Confirm ARM by checking for the board config file in the AS installation
