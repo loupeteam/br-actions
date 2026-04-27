@@ -27,6 +27,18 @@ def build(exe_path: str, project_apj: str, config: str, build_mode: str = 'Build
     project_apj = os.path.normpath(os.path.abspath(project_apj))
     project_dir = os.path.dirname(project_apj)
 
+    # Diagnostics — print everything before invoking the subprocess
+    print(f'CWD            : {os.getcwd()}', flush=True)
+    print(f'exe_path       : {exe_path}   (exists={os.path.isfile(exe_path)})', flush=True)
+    print(f'project_apj    : {project_apj}   (exists={os.path.isfile(project_apj)})', flush=True)
+    print(f'project_dir    : {project_dir}   (isdir={os.path.isdir(project_dir)})', flush=True)
+    if not os.path.isfile(project_apj):
+        print(f'::error::Project file not found: {project_apj}', file=sys.stderr)
+        sys.exit(1)
+    if not os.path.isdir(project_dir):
+        print(f'::error::Project directory not found: {project_dir}', file=sys.stderr)
+        sys.exit(1)
+
     cmd = [exe_path, project_apj, '-c', config, '-buildMode', build_mode, '-all']
     print(f'Running: {" ".join(cmd)}', flush=True)
 
