@@ -1,0 +1,44 @@
+name: 'Prepare LPM package.json'
+description: >
+  Generate/update a package.json for an exported B&R library so it can be
+  published to a Loupe Package Manager (npm-compatible) registry. Reads a
+  template package.json from the library source directory, sets the version,
+  and syncs `dependencies` from the library's .lby <Dependencies> entries
+  (skipping AS built-ins, mapping the rest to @loupeteam/<lowercased>).
+
+inputs:
+  library-dir:
+    description: 'Library source directory (contains the .lby and a template package.json)'
+    required: true
+  output-dir:
+    description: 'Directory to write package.json into (typically the exported version directory)'
+    required: true
+  version:
+    description: 'Version string to write into package.json (no leading "v")'
+    required: true
+  scope:
+    description: 'npm scope used for Loupe library deps'
+    required: false
+    default: '@loupeteam'
+  default-version-range:
+    description: 'Version range used for Loupe deps that have no entry in the template package.json'
+    required: false
+    default: '*'
+  builtins:
+    description: 'Comma- or whitespace-separated list of additional .lby ObjectNames to treat as AS built-ins (skipped)'
+    required: false
+    default: ''
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Prepare package.json
+      shell: bash
+      run: |
+        python "${{ github.action_path }}/prepare_lpm_package.py" \
+          --library-dir "${{ inputs.library-dir }}" \
+          --output-dir "${{ inputs.output-dir }}" \
+          --version "${{ inputs.version }}" \
+          --scope "${{ inputs.scope }}" \
+          --default-range "${{ inputs.default-version-range }}" \
+          --extra-builtins "${{ inputs.builtins }}"

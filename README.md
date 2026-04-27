@@ -10,6 +10,7 @@ Reusable GitHub Actions composite actions for building and exporting
 | `find-as6-build` | Locates `BR.AS.Build.exe` for AS6 — handles runners with multiple AS versions installed |
 | `build-as-project` | Builds a single AS6 project configuration via `BR.AS.Build.exe` |
 | `export-as-library` | Exports a compiled library into the standard Loupe/LPM distribution layout |
+| `prepare-lpm-package` | Generates a `package.json` for an exported library — sets the version and syncs `dependencies` from the `.lby` |
 
 ## Requirements
 
