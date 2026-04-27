@@ -32,18 +32,11 @@ LIB_NS = '{http://br-automation.co.at/AS/Library}'
 
 # Standard B&R Automation Studio libraries shipped with AR. These are NOT
 # packaged via LPM — they're always available on the target — so we skip them
-# when generating the dependency list.
-DEFAULT_AS_BUILTINS = {
-    # Strings / conversion / runtime basics
-    'astime', 'AsBrStr', 'AsBrWStr', 'AsString', 'standard', 'operator',
-    'runtime', 'sys_lib', 'brsystem',
-    # System / config / security / diagnostics
-    'AsArCfg', 'AsArSdm', 'AsArSec', 'AsArDog', 'AsArLog', 'AsArSig',
-    'AsArTime', 'AsTime', 'AsGuard', 'AsSafety', 'AsSem',
-    # IO / comm / files / utilities
-    'AsHttp', 'AsIecCon', 'AsIO', 'AsMem', 'AsTcp', 'AsUdp', 'AsUSB',
-    'AsZlib', 'AsFile', 'AsMath', 'AsRfb', 'AsXml',
-}
+# when generating the dependency list. Loaded from br-libraries.txt alongside
+# this script.
+_BR_LIBS_FILE = os.path.join(os.path.dirname(__file__), 'br-libraries.txt')
+with open(_BR_LIBS_FILE, encoding='utf-8') as _f:
+    DEFAULT_AS_BUILTINS = {line.strip() for line in _f if line.strip()}
 
 
 def _read_lby_dependencies(library_dir: str) -> list[str]:
