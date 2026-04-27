@@ -25,13 +25,18 @@ def build(exe_path: str, project_apj: str, config: str, build_mode: str = 'Build
     import os
     exe_path    = os.path.normpath(os.path.abspath(exe_path))
     project_apj = os.path.normpath(os.path.abspath(project_apj))
+    project_dir = os.path.dirname(project_apj)
 
-    cmd = [exe_path, project_apj, '-c', config, '-buildMode', build_mode]
+    cmd = [exe_path, project_apj, '-c', config, '-buildMode', build_mode, '-all']
     print(f'Running: {" ".join(cmd)}', flush=True)
 
+    # Run from the project directory — BR.AS.Build.exe resolves relative paths
+    # (e.g. Temp/, Binaries/) relative to its CWD, not the .apj location.
     # Merge stderr into stdout so both pipes are drained together — reading them
     # separately risks deadlock if the stderr buffer fills while we block on stdout.
-    process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    process = subprocess.Popen(
+        cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, cwd=project_dir
+    )
 
     output_lines = []
     for line in process.stdout:
