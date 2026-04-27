@@ -30,9 +30,16 @@ References:
 import argparse
 import os
 import shutil
+import struct
 import sys
 import tempfile
 import xml.etree.ElementTree as ET
+
+# ELF e_machine values used to detect CPU architecture from compiled object files
+_ELF_MAGIC = b'\x7fELF'
+_ELF_EM_386    = 0x0003  # IA-32 (SG4)
+_ELF_EM_ARM    = 0x0028  # ARM 32-bit (SG4_ARM)
+_ELF_EM_AARCH64 = 0x00B7  # ARM 64-bit (SG4_ARM)
 
 # ---------------------------------------------------------------------------
 # Source-file detection — mirrors ASLibrary.__isSourceFile in the B&R reference
@@ -47,6 +54,32 @@ def _is_source_file(filename: str) -> bool:
     if os.path.basename(filename).startswith('.clang'):
         return True
     return False
+
+
+def _sniff_elf_arch(project_dir: str, config_name: str, cpu_name: str, library_name: str) -> str | None:
+    """
+    Detect SG4 vs SG4_ARM by reading the ELF e_machine field from a compiled .o
+    file in Temp/Objects/{config}/{cpu}/{library}/.
+    Returns 'SG4', 'SG4_ARM', or None if no suitable file is found.
+    """
+    obj_dir = os.path.join(project_dir, 'Temp', 'Objects', config_name, cpu_name, library_name)
+    if not os.path.isdir(obj_dir):
+        return None
+    for fname in os.listdir(obj_dir):
+        if not fname.endswith('.o'):
+            continue
+        try:
+            with open(os.path.join(obj_dir, fname), 'rb') as f:
+                header = f.read(20)
+            if len(header) < 20 or header[:4] != _ELF_MAGIC:
+                continue
+            machine = struct.unpack_from('<H', header, 18)[0]
+            if machine in (_ELF_EM_ARM, _ELF_EM_AARCH64):
+                return 'SG4_ARM'
+            return 'SG4'
+        except OSError:
+            continue
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -72,6 +105,7 @@ def _get_cpu_architecture(
     config_name: str,
     cpu_name: str,
     as_install: str = '',
+    library_name: str = '',
 ) -> str:
     """
     Determine the CPU architecture from post-build artifacts.
@@ -114,7 +148,12 @@ def _get_cpu_architecture(
             return 'SG4'
 
         if not hw_name or not as_install:
-            # Cannot confirm ARM without AS install path — assume ARM if ashwd exists
+            # Without AS install path, sniff the ELF header of a compiled object file
+            if library_name:
+                elf_arch = _sniff_elf_arch(project_dir, config_name, cpu_name, library_name)
+                if elf_arch is not None:
+                    return elf_arch
+            # Fall back: ashwd exists but architecture unconfirmed — assume ARM
             return 'SG4_ARM'
 
         # Confirm ARM by checking for the board config file in the AS installation
@@ -288,7 +327,7 @@ def export_library(
         for config_name in config_names:
             print(f'\nProcessing config: {config_name}')
             cpu_name = _get_cpu_name(project_dir, config_name)
-            arch = _get_cpu_architecture(project_dir, config_name, cpu_name, as_install)
+            arch = _get_cpu_architecture(project_dir, config_name, cpu_name, as_install, library_name)
             print(f'  CPU      : {cpu_name}')
             print(f'  Arch     : {arch}')
 
