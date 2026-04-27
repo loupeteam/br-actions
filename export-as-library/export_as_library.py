@@ -35,6 +35,14 @@ import sys
 import tempfile
 import xml.etree.ElementTree as ET
 
+# Ensure stdout/stderr can encode non-ASCII output (e.g. arrows) on Windows runners
+# where the default code page is cp1252.
+try:
+    sys.stdout.reconfigure(encoding='utf-8')
+    sys.stderr.reconfigure(encoding='utf-8')
+except Exception:
+    pass
+
 # ELF e_machine values used to detect CPU architecture from compiled object files
 _ELF_MAGIC = b'\x7fELF'
 _ELF_EM_386    = 0x0003  # IA-32 (SG4)
