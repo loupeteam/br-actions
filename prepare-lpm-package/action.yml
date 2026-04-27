@@ -33,12 +33,12 @@ runs:
   using: 'composite'
   steps:
     - name: Prepare package.json
-      shell: bash
+      shell: pwsh
       run: |
-        python "${{ github.action_path }}/prepare_lpm_package.py" \
-          --library-dir "${{ inputs.library-dir }}" \
-          --output-dir "${{ inputs.output-dir }}" \
-          --version "${{ inputs.version }}" \
-          --scope "${{ inputs.scope }}" \
-          --default-range "${{ inputs.default-version-range }}" \
+        python "${{ github.action_path }}/prepare_lpm_package.py" `
+          --library-dir "${{ inputs.library-dir }}" `
+          --output-dir "${{ inputs.output-dir }}" `
+          --version "${{ inputs.version }}" `
+          --scope "${{ inputs.scope }}" `
+          --default-range "${{ inputs.default-version-range }}" `
           --extra-builtins "${{ inputs.builtins }}"
