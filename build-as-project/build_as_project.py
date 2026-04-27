@@ -19,6 +19,13 @@ import sys
 
 
 def build(exe_path: str, project_apj: str, config: str, build_mode: str = 'Build') -> None:
+    # BR.AS.Build.exe requires an absolute path with Windows separators.
+    # The runner's CWD is the workspace root, so relative paths (e.g. "example/As6Project/AsProject.apj")
+    # resolve correctly via os.path.abspath, and os.path.normpath converts '/' to '\'.
+    import os
+    exe_path    = os.path.normpath(os.path.abspath(exe_path))
+    project_apj = os.path.normpath(os.path.abspath(project_apj))
+
     cmd = [exe_path, project_apj, '-c', config, '-buildMode', build_mode]
     print(f'Running: {" ".join(cmd)}', flush=True)
 
