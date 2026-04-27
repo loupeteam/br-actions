@@ -96,6 +96,7 @@ def main() -> int:
         return 1
 
     builtins = set(DEFAULT_AS_BUILTINS) | _split_extra(args.extra_builtins)
+    builtins = {b.lower() for b in builtins}
 
     pkg = _load_template_package(library_dir)
     pkg['version'] = version
@@ -106,10 +107,11 @@ def main() -> int:
 
     new_deps: 'OrderedDict[str, str]' = OrderedDict()
     for obj in _read_lby_dependencies(library_dir):
-        if obj in builtins:
+        obj_lower = obj.lower()
+        if obj_lower in builtins:
             print(f'  Skipping AS built-in dependency: {obj}')
             continue
-        pkg_name = f'{scope}/{obj.lower()}'
+        pkg_name = f'{scope}/{obj_lower}'
         version_range = template_deps.get(pkg_name, args.default_range)
         new_deps[pkg_name] = version_range
         print(f'  Loupe dependency: {obj} -> {pkg_name}@{version_range}')
