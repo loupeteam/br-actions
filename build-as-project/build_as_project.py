@@ -22,24 +22,18 @@ def build(exe_path: str, project_apj: str, config: str, build_mode: str = 'Build
     cmd = [exe_path, project_apj, '-c', config, '-buildMode', build_mode]
     print(f'Running: {" ".join(cmd)}', flush=True)
 
-    process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    # Merge stderr into stdout so both pipes are drained together — reading them
+    # separately risks deadlock if the stderr buffer fills while we block on stdout.
+    process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
 
-    stdout_lines = []
-    stderr_lines = []
-
-    # Stream stdout line-by-line as the build runs
+    output_lines = []
     for line in process.stdout:
         print(line, end='', flush=True)
-        stdout_lines.append(line)
-
-    # Drain stderr after stdout closes
-    for line in process.stderr:
-        print(line, end='', file=sys.stderr, flush=True)
-        stderr_lines.append(line)
+        output_lines.append(line)
 
     process.wait()
 
-    combined = ''.join(stdout_lines) + ''.join(stderr_lines)
+    combined = ''.join(output_lines)
 
     # BR.AS.Build.exe reports errors as "N error(s)" in its summary line.
     # Exit code 1 alone is not sufficient (it also appears on warnings-only builds).
