@@ -26,7 +26,7 @@ runs:
     - name: Build ${{ inputs.config }}
       shell: pwsh
       run: |
-        python "${{ github.action_path }}/build_as_project.py" `
+        python -u "${{ github.action_path }}/build_as_project.py" `
           --exe      "${{ inputs.exe-path }}" `
           --project  "${{ inputs.project }}" `
           --config   "${{ inputs.config }}" `
