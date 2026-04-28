@@ -90,4 +90,7 @@ if __name__ == '__main__':
     parser.add_argument('--build-mode', default='Build', help='Build mode (Build or Rebuild)')
     args = parser.parse_args()
 
-    build(args.exe, args.project, args.config, args.build_mode)
+    # Treat empty/whitespace as unset (e.g. when a workflow forwards an
+    # unset workflow_dispatch input via ${{ inputs.build-mode }}).
+    build_mode = (args.build_mode or '').strip() or 'Build'
+    build(args.exe, args.project, args.config, build_mode)
