@@ -66,12 +66,38 @@ Two workflows live in the consuming repo:
   - Automation Studio 6 installed (default location
     `C:\BrAutomation\AS6` is auto-detected; otherwise set
     `BR_AS6_BUILD_PATH` as a runner env var)
-  - Python 3.x available (or installed by `actions/setup-python` in the workflow)
-  - Node.js available (or installed by `actions/setup-node`) for the
-    publish step
+  - **Python 3.x installed on the runner and on `PATH`** — the
+    composite actions invoke `python` directly. We deliberately do
+    *not* use `actions/setup-python` because on a self-hosted runner
+    it re-downloads/extracts Python on every run (~30s+ overhead).
+    Install Python once on the runner box (e.g.
+    `winget install Python.Python.3.13`) and restart the runner
+    service so the new `PATH` takes effect.
+  - Node.js available — needed only by the publish workflow.
+    `actions/setup-node` is still used because we need it to write
+    the `.npmrc` for GitHub Packages auth, but if you'd rather use a
+    runner-installed Node, see step 4.
 - Repository permission to push to GitHub Packages (`packages: write`).
 - The library example project upgraded to Automation Studio 6
   (the actions only support AS6).
+
+### PR build approval (security)
+
+The `Build` workflow runs on `pull_request`. To prevent untrusted
+code from running on the self-hosted runner, set in the repo:
+
+**Settings → Actions → General → Fork pull request workflows from
+outside collaborators → Require approval for all outside
+collaborators.**
+
+With this on, PRs from forks/non-maintainers wait in a
+*"Waiting for approval"* state until a maintainer clicks
+**Approve and run**. Internal PRs (branches in the same repo) run
+automatically.
+
+> Do **not** switch the trigger to `pull_request_target` — that runs
+> in the base branch's context with full secrets, defeating the
+> approval gate.
 
 ---
 
@@ -151,6 +177,14 @@ on:
         default: 'Build'
         type: choice
         options: [Build, Rebuild]
+  # Build PRs. Outside contributors are gated by the repo-level
+  # "Require approval" setting (see Prerequisites). Do NOT use
+  # pull_request_target.
+  pull_request:
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+      - 'LICENSE'
 
 jobs:
   build:
@@ -165,11 +199,6 @@ jobs:
         with:
           ref: ${{ inputs.ref }}
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.x'
-
       - name: Find AS6 build executable
         uses: loupeteam/br-actions/find-as6-build@v1
         id: find-as
@@ -180,7 +209,8 @@ jobs:
           exe-path:   ${{ steps.find-as.outputs.exe-path }}
           project:    ${{ env.PROJECT }}
           config:     Intel
-          build-mode: ${{ inputs.build-mode }}
+          # `|| 'Build'` makes pull_request runs (no inputs) work.
+          build-mode: ${{ inputs.build-mode || 'Build' }}
 
       - name: Build ARM
         uses: loupeteam/br-actions/build-as-project@v1
@@ -188,7 +218,7 @@ jobs:
           exe-path:   ${{ steps.find-as.outputs.exe-path }}
           project:    ${{ env.PROJECT }}
           config:     ARM
-          build-mode: ${{ inputs.build-mode }}
+          build-mode: ${{ inputs.build-mode || 'Build' }}
 
       - name: Upload build diagnostics
         if: always()
@@ -198,6 +228,10 @@ jobs:
           path: example/As6Project/Temp/BuildDiagnostics.log
           if-no-files-found: ignore
 ```
+
+> Tip: only `PROJECT` is configured per-repo. The publish workflow
+> (next step) derives the project directory and library name
+> automatically.
 
 ### Step 4 — Add the build/export/publish workflow
 
@@ -226,18 +260,12 @@ jobs:
 
     env:
       PROJECT:     example/As6Project/AsProject.apj
-      PROJECT_DIR: example/As6Project
-      LIBRARY:     StringExt
       LIBRARY_DIR: src/Ar/StringExt
       EXPORT_DIR:  export
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with: { python-version: '3.x' }
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -262,6 +290,26 @@ jobs:
         uses: loupeteam/br-actions/find-as6-build@v1
         id: find-as
 
+      # Derive the project directory and library name once, so per-repo
+      # customisation is limited to PROJECT and LIBRARY_DIR. The library
+      # name is the basename of the .lby file (typically `ANSIC` for C
+      # libraries, `IEC` for ST libraries).
+      - name: Resolve project paths
+        id: project
+        shell: pwsh
+        run: |
+          $apj = "${{ env.PROJECT }}"
+          if (-not (Test-Path $apj)) { Write-Error "Project file not found: $apj"; exit 1 }
+          $dir = Split-Path $apj -Parent
+          "dir=$dir" | Out-File -Append -Encoding utf8 -FilePath $env:GITHUB_OUTPUT
+
+          $libDir = "${{ env.LIBRARY_DIR }}"
+          $lby = Get-ChildItem -Path $libDir -Filter *.lby -File |
+                   Select-Object -First 1
+          if (-not $lby) { Write-Error "No .lby file found in: $libDir"; exit 1 }
+          $libName = [System.IO.Path]::GetFileNameWithoutExtension($lby.Name)
+          "library=$libName" | Out-File -Append -Encoding utf8 -FilePath $env:GITHUB_OUTPUT
+
       - name: Build Intel
         uses: loupeteam/br-actions/build-as-project@v1
         with:
@@ -279,18 +327,21 @@ jobs:
       - name: Export library
         uses: loupeteam/br-actions/export-as-library@v1
         with:
-          project-dir: ${{ env.PROJECT_DIR }}
-          library:     ${{ env.LIBRARY }}
+          project-dir: ${{ steps.project.outputs.dir }}
+          library:     ${{ steps.project.outputs.library }}
           library-dir: ${{ env.LIBRARY_DIR }}
           configs:     Intel ARM
           output:      ${{ env.EXPORT_DIR }}
           as-install:  ${{ steps.find-as.outputs.install-path }}
 
+      # Required: the export action writes to `<EXPORT_DIR>/<library>/V<lbyVersion>/`,
+      # where `<lbyVersion>` comes from the .lby's Version attribute, not the
+      # publish version we resolved above. Downstream steps need the actual path.
       - name: Locate exported version directory
         id: export-dir
         shell: pwsh
         run: |
-          $path = Get-ChildItem "$env:EXPORT_DIR/$env:LIBRARY" -Directory |
+          $path = Get-ChildItem "$env:EXPORT_DIR/${{ steps.project.outputs.library }}" -Directory |
                   Select-Object -First 1 -ExpandProperty FullName
           "path=$path" | Out-File -Append -Encoding utf8 -FilePath $env:GITHUB_OUTPUT
 
@@ -300,6 +351,14 @@ jobs:
           library-dir: ${{ env.LIBRARY_DIR }}
           output-dir:  ${{ steps.export-dir.outputs.path }}
           version:     ${{ steps.version.outputs.version }}
+
+      # Without this, GitHub Packages shows "No readme data found" on each
+      # version page (the package landing page falls back to the repo README,
+      # but version pages only show what's inside the published tarball).
+      - name: Copy README into package
+        shell: pwsh
+        run: |
+          Copy-Item -Path README.md -Destination "${{ steps.export-dir.outputs.path }}/README.md" -Force
 
       - name: Publish to GitHub Packages
         shell: pwsh
@@ -313,8 +372,8 @@ jobs:
       - name: Upload exported library artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.LIBRARY }}-${{ steps.version.outputs.version }}
-          path: ${{ env.EXPORT_DIR }}/${{ env.LIBRARY }}/
+          name: ${{ steps.project.outputs.library }}-${{ steps.version.outputs.version }}
+          path: ${{ env.EXPORT_DIR }}/${{ steps.project.outputs.library }}/
           if-no-files-found: error
 ```
 
@@ -324,12 +383,15 @@ For each library, update the `env:` block in both workflows:
 
 | Variable | Example | Notes |
 |----------|---------|-------|
-| `PROJECT` | `example/As6Project/AsProject.apj` | Path to `.apj` |
-| `PROJECT_DIR` | `example/As6Project` | Project root |
-| `LIBRARY` | `StringExt` | `.lby` base name (case-sensitive) |
-| `LIBRARY_DIR` | `src/Ar/StringExt` | Source dir holding `.lby` + `package.json` |
+| `PROJECT` | `example/As6Project/AsProject.apj` | Path to `.apj`. The publish workflow derives the project directory from this. |
+| `LIBRARY_DIR` | `src/Ar/StringExt` | Source dir holding the `.lby` + `package.json`. The library name (`.lby` basename — usually `ANSIC` for C libraries, `IEC` for ST libraries) is auto-detected. |
 | `EXPORT_DIR` | `export` | Output root |
 | `Build Intel/ARM` step `config:` | `Intel` / `ARM` | Must match `Physical/<config>/` folder names |
+
+> Note: Don't rename the `.lby` file. AS expects the standard names
+> (`ANSIC.lby` for C libraries, `IEC.lby` for ST libraries) — that's
+> the on-disk identifier used by the build, not the package name. The
+> npm package name comes from `package.json`.
 
 ### Step 6 — Remove the Jenkinsfile
 
@@ -348,9 +410,17 @@ there directly).
 
 ### Step 8 — First test run
 
-1. Open **Actions** → **Build** → **Run workflow**.
-2. Set `ref` to your feature branch (if needed) and run.
-3. Verify both `Build Intel` and `Build ARM` succeed.
+Three ways to trigger the build workflow:
+
+- **Open a PR** — the `pull_request` trigger runs the build
+  automatically (or after maintainer approval for outside
+  contributors). This is the normal day-to-day mode.
+- **Manual dispatch** — Open **Actions** → **Build** →
+  **Run workflow**, set `ref` to your feature branch if needed.
+- **Push to default branch** — not enabled by default; add a
+  `push:` trigger if you want it.
+
+Verify both `Build Intel` and `Build ARM` succeed.
 
 ### Step 9 — First publish run
 
@@ -391,11 +461,17 @@ pin to `@main` in production.
 |---------|-------|-----|
 | Workflow doesn't appear in **Actions** tab | File not on default branch | Merge/cherry-pick the workflow to `main` |
 | `bash: command not found` | Step uses `shell: bash` on Windows runner | Use `shell: pwsh` |
+| `python: command not found` | Python not installed on the runner / not on `PATH` | Install Python on the runner box (see Prerequisites) and restart the runner service |
+| `setup-python` runs slowly every build (~30s) | Self-hosted runner has no persistent toolcache | Remove `actions/setup-python` and rely on runner-installed Python |
 | Project file not found at `.../AsProject.apj` | Checkout pulled a branch that lacks `As6Project/` | Use the `ref` input or merge the AS6 project to `main` |
+| `BR.AS.Build.exe` ... `Must specify valid information for parsing` | Empty value passed for `-buildMode` (e.g. `inputs.build-mode` is unset on `pull_request`) | Use `${{ inputs.build-mode || 'Build' }}`; fixed in `br-actions` ≥ `v1` |
 | `BR.AS.Build.exe` exits 1 with only warnings | AS treats warnings as errors at exit code | Already tolerated — `build-as-project` only fails on real errors |
 | Intel artifacts missing from `SG4/` | Both configs detected as `SG4_ARM` | Fixed in `br-actions` ≥ `v1` (ELF arch sniff) |
 | `UnicodeEncodeError` on `→` | Windows runner stdout = cp1252 | Fixed in `br-actions` ≥ `v1` (forces UTF-8 stdout) |
+| PR from a fork sits in *Waiting for approval* | Repo policy requires approval for outside collaborators | Maintainer clicks **Approve and run** — this is intentional |
 | `npm publish` 409 / 403 | Re-publishing same version, or token lacks `packages: write` | Bump version, or add the permissions block |
+| Version page shows "No readme data found" | `npm publish` only includes a README if one sits next to `package.json` in the published tarball; the exported version dir doesn't have one | Add a `Copy README into package` step before publish (already in the template) |
+| `Get-ChildItem` returns nothing for `Temp/Objects/<config>/<cpu>/<library>/` during export | The library identifier passed to `export-as-library` doesn't match the `.lby` basename | Don't override the auto-detected library name; the `.lby` basename (`ANSIC` / `IEC`) is what AS uses for build artifacts |
 
 ### Useful links
 
