@@ -35,6 +35,7 @@ AsBrStr
 AsBrWStr
 AsCANopen
 AsCont
+AsDb
 AsEPL
 AsETH
 AsEthIP
