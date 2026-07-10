@@ -11,6 +11,7 @@ Reusable GitHub Actions composite actions for building and exporting
 | `build-as-project` | Builds a single AS6 project configuration via `BR.AS.Build.exe` |
 | `export-as-library` | Exports a compiled library into the standard Loupe/LPM distribution layout |
 | `prepare-lpm-package` | Generates a `package.json` for an exported library — sets the version and syncs `dependencies` from the `.lby` |
+| `update-dtm-catalog` | Registers a project's FDT/DTM devices into the AS6 DTM catalog so headless builds resolve EtherCAT / FDT-DTM hardware (fixes build error 4836) |
 
 ## Requirements
 
@@ -47,6 +48,28 @@ Reusable GitHub Actions composite actions for building and exporting
     as-install:  ${{ steps.find-as.outputs.install-path }}
 ```
 
+For a project that includes third-party **FDT/DTM** devices (e.g. an EtherCAT
+slave via the generic-slave DTM), refresh the DTM catalog after locating AS and
+before building — otherwise the headless build fails with error `4836`:
+
+```yaml
+- name: Find AS6 build executable
+  uses: loupeteam/bnr-build-actions/find-as6-build@v1
+  id: find-as
+
+- name: Update DTM catalog
+  uses: loupeteam/bnr-build-actions/update-dtm-catalog@v1
+  with:
+    install-path: ${{ steps.find-as.outputs.install-path }}
+
+- name: Build
+  uses: loupeteam/bnr-build-actions/build-as-project@v1
+  with:
+    exe-path: ${{ steps.find-as.outputs.exe-path }}
+    project:  AsProject/AsProject.apj
+    config:   Config1
+```
+
 ## Inputs & Outputs
 
 ### `find-as6-build`
@@ -79,6 +102,19 @@ Override discovery by setting `BR_AS6_BUILD_PATH` as a runner environment variab
 | `configs` | yes | — | Space-separated config names |
 | `output` | yes | — | Output root directory |
 | `as-install` | no | — | AS6 install path (for ARM detection) |
+
+### `update-dtm-catalog`
+
+| Input | Required | Default | Description |
+|-------|----------|---------|-------------|
+| `install-path` | yes | — | AS6 install directory (`install-path` output of `find-as6-build`) |
+| `bin-subdir` | no | `Bin-en` | Subfolder of `install-path` holding `BR.AS.Hardware.CLI.dll` |
+| `import-files` | no | *(none)* | Device files (ESI / `.dtm`) to import before the refresh — one per line or comma-separated |
+| `list-devices` | no | `true` | Print `Get-ThirdPartyDevices` for diagnostics |
+
+Runs under 32-bit Windows PowerShell (the AS libraries it uses are 32-bit).
+Only needed for projects with third-party FDT/DTM devices (e.g. an EtherCAT
+slave); pure-library and B&R-only-hardware projects don't need it.
 
 ## Export layout
 

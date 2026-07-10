@@ -1,0 +1,89 @@
+name: 'Update DTM Catalog'
+description: >
+  Registers FDT/DTM devices into the Automation Studio 6 DTM catalog so headless
+  BR.AS.Build.exe can build EtherCAT / FDT-DTM projects. Fixes build error 4836
+  ("Support for FDT/DTM hardware module ... is not available") that occurs because
+  BR.AS.Build.exe, unlike the AS GUI, does not register a project's DTM devices on
+  its own. Wraps B&R's BR.AS.Hardware.CLI, which must run under 32-bit Windows
+  PowerShell (the AS libraries it depends on are 32-bit).
+author: 'Loupe'
+
+inputs:
+  install-path:
+    description: >
+      Automation Studio 6 installation directory (the parent of Bin-en/). Use the
+      install-path output of the find-as6-build action.
+    required: true
+  bin-subdir:
+    description: 'Subfolder of install-path that contains BR.AS.Hardware.CLI.dll.'
+    required: false
+    default: 'Bin-en'
+  import-files:
+    description: >
+      Optional device description files to import before refreshing the catalog, one
+      per line or comma-separated (e.g. an EtherCAT ESI, or a project .dtm). Imported
+      with Import-DtmDevice -Force. Leave empty to only refresh the catalog — needed
+      when the specific device is not yet registered on the runner.
+    required: false
+    default: ''
+  list-devices:
+    description: 'Print the registered third-party device catalog (Get-ThirdPartyDevices) for diagnostics.'
+    required: false
+    default: 'true'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Update DTM catalog
+      shell: pwsh
+      # Inputs are passed via env (not inlined into the script) to avoid injection.
+      env:
+        DTM_INSTALL_PATH: ${{ inputs.install-path }}
+        DTM_BIN_SUBDIR: ${{ inputs.bin-subdir }}
+        DTM_IMPORT_FILES: ${{ inputs.import-files }}
+        DTM_LIST_DEVICES: ${{ inputs.list-devices }}
+      run: |
+        $ErrorActionPreference = 'Stop'
+        $bin  = Join-Path $env:DTM_INSTALL_PATH $env:DTM_BIN_SUBDIR
+        $dll  = Join-Path $bin 'BR.AS.Hardware.CLI.dll'
+        $ps32 = Join-Path $env:WINDIR 'SysWOW64\WindowsPowerShell\v1.0\powershell.exe'
+
+        if (-not (Test-Path -LiteralPath $dll))  { throw "BR.AS.Hardware.CLI.dll not found at '$dll'. The AS6 install may be missing the DTM component." }
+        if (-not (Test-Path -LiteralPath $ps32)) { throw "32-bit Windows PowerShell not found at '$ps32'." }
+
+        $imports = @()
+        if ($env:DTM_IMPORT_FILES) {
+          $imports = $env:DTM_IMPORT_FILES -split "[`r`n,]" | ForEach-Object { $_.Trim() } | Where-Object { $_ }
+        }
+
+        # BR.AS.Hardware.CLI depends on 32-bit AS libraries, so it must run under
+        # SysWOW64 Windows PowerShell (64-bit pwsh errors on Import-Module). Emit the
+        # commands to a script file and invoke it with the 32-bit host.
+        $lines = [System.Collections.Generic.List[string]]::new()
+        $lines.Add("`$ErrorActionPreference = 'Stop'")
+        $lines.Add("Set-Location -LiteralPath '$bin'")
+        $lines.Add("Import-Module '.\BR.AS.Hardware.CLI.dll'")
+        foreach ($f in $imports) {
+          $lines.Add("Write-Host '== Import-DtmDevice: $f =='")
+          $lines.Add("Import-DtmDevice -FilePaths '$f' -Force -Verbose")
+        }
+        $lines.Add("Write-Host '== Update-DtmCatalog =='")
+        $lines.Add("Update-DtmCatalog -Verbose")
+        if ($env:DTM_LIST_DEVICES -eq 'true') {
+          $lines.Add("Get-ThirdPartyDevices | Sort-Object Vendor, Name | Format-Table Name, Version, Vendor -AutoSize")
+        }
+
+        $script = @()
+        $script += "try {"
+        $script += ($lines | ForEach-Object { "  $_" })
+        $script += "} catch { Write-Error `$_; exit 1 }"
+        $script += "exit [System.Environment]::ExitCode"
+
+        $scriptPath = Join-Path $env:RUNNER_TEMP 'update-dtm-catalog.ps1'
+        Set-Content -LiteralPath $scriptPath -Value ($script -join "`n") -Encoding UTF8
+
+        Write-Host "Running BR.AS.Hardware.CLI (32-bit) from '$bin'"
+        & $ps32 -NoProfile -ExecutionPolicy Bypass -File $scriptPath
+        $rc = $LASTEXITCODE
+        if ($rc -ne 0) { throw "DTM catalog update failed (exit code $rc)." }
+        Write-Host 'DTM catalog update complete.'
