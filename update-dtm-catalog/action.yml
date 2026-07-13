@@ -59,13 +59,18 @@ runs:
         # BR.AS.Hardware.CLI depends on 32-bit AS libraries, so it must run under
         # SysWOW64 Windows PowerShell (64-bit pwsh errors on Import-Module). Emit the
         # commands to a script file and invoke it with the 32-bit host.
+        # Values embedded into the emitted single-quoted PowerShell strings must have
+        # their single quotes doubled, or a path containing a ' (e.g. C:\Users\O'Connor)
+        # would break the string / allow command injection.
+        $binEsc = $bin.Replace("'", "''")
         $lines = [System.Collections.Generic.List[string]]::new()
         $lines.Add("`$ErrorActionPreference = 'Stop'")
-        $lines.Add("Set-Location -LiteralPath '$bin'")
+        $lines.Add("Set-Location -LiteralPath '$binEsc'")
         $lines.Add("Import-Module '.\BR.AS.Hardware.CLI.dll'")
         foreach ($f in $imports) {
-          $lines.Add("Write-Host '== Import-DtmDevice: $f =='")
-          $lines.Add("Import-DtmDevice -FilePaths '$f' -Force -Verbose")
+          $fEsc = $f.Replace("'", "''")
+          $lines.Add("Write-Host '== Import-DtmDevice: $fEsc =='")
+          $lines.Add("Import-DtmDevice -FilePaths '$fEsc' -Force -Verbose")
         }
         $lines.Add("Write-Host '== Update-DtmCatalog =='")
         $lines.Add("Update-DtmCatalog -Verbose")

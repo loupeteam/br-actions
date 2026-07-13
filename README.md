@@ -27,18 +27,18 @@ Reusable GitHub Actions composite actions for building and exporting
     python-version: '3.x'
 
 - name: Find AS6 build executable
-  uses: loupeteam/bnr-build-actions/find-as6-build@v1
+  uses: loupeteam/br-actions/find-as6-build@v1
   id: find-as
 
 - name: Build Intel
-  uses: loupeteam/bnr-build-actions/build-as-project@v1
+  uses: loupeteam/br-actions/build-as-project@v1
   with:
     exe-path: ${{ steps.find-as.outputs.exe-path }}
     project:  example/AsProject/AsProject.apj
     config:   Intel
 
 - name: Export library
-  uses: loupeteam/bnr-build-actions/export-as-library@v1
+  uses: loupeteam/br-actions/export-as-library@v1
   with:
     project-dir: example/AsProject
     library:     MyLib
@@ -54,16 +54,16 @@ before building — otherwise the headless build fails with error `4836`:
 
 ```yaml
 - name: Find AS6 build executable
-  uses: loupeteam/bnr-build-actions/find-as6-build@v1
+  uses: loupeteam/br-actions/find-as6-build@v1
   id: find-as
 
 - name: Update DTM catalog
-  uses: loupeteam/bnr-build-actions/update-dtm-catalog@v1
+  uses: loupeteam/br-actions/update-dtm-catalog@v1
   with:
     install-path: ${{ steps.find-as.outputs.install-path }}
 
 - name: Build
-  uses: loupeteam/bnr-build-actions/build-as-project@v1
+  uses: loupeteam/br-actions/build-as-project@v1
   with:
     exe-path: ${{ steps.find-as.outputs.exe-path }}
     project:  AsProject/AsProject.apj
