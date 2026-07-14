@@ -1,0 +1,95 @@
+name: 'Update DTM Catalog'
+description: >
+  Registers FDT/DTM devices into the Automation Studio 6 DTM catalog so headless
+  BR.AS.Build.exe can build EtherCAT / FDT-DTM projects. Fixes build error 4836
+  ("Support for FDT/DTM hardware module ... is not available") that occurs because
+  BR.AS.Build.exe, unlike the AS GUI, does not register a project's DTM devices on
+  its own. Wraps B&R's BR.AS.Hardware.CLI, which must run under 32-bit Windows
+  PowerShell (the AS libraries it depends on are 32-bit).
+author: 'Loupe'
+
+inputs:
+  as-install:
+    description: >
+      Automation Studio 6 installation directory (the parent of Bin-en/). Use the
+      install-path output of the find-as6-build action.
+    required: true
+  bin-subdir:
+    description: 'Subfolder of as-install that contains BR.AS.Hardware.CLI.dll.'
+    required: false
+    default: 'Bin-en'
+  import-files:
+    description: >
+      Optional device description files to import before refreshing the catalog,
+      one per line (e.g. an EtherCAT ESI, or a project .dtm). Imported with
+      Import-DtmDevice -Force. Relative paths are resolved against the workspace.
+      Update-DtmCatalog alone only refreshes DTMs already installed on the runner
+      and skips duplicates, so a project's specific device usually must be imported
+      here for the build to resolve it.
+    required: false
+    default: ''
+  expect-devices:
+    description: >
+      Optional device names, one per line, that must appear in the catalog after
+      the update; the action fails if any are missing (matched case-insensitively
+      as substrings of the device Name). Use this to turn a silent "green but the
+      device still is not registered" into a clear failure.
+    required: false
+    default: ''
+  list-devices:
+    description: 'Print the registered third-party device catalog (Get-ThirdPartyDevices) for diagnostics.'
+    required: false
+    default: 'true'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Update DTM catalog
+      shell: pwsh
+      # Inputs are passed via env (not inlined into the script) to avoid injection.
+      env:
+        DTM_AS_INSTALL: ${{ inputs.as-install }}
+        DTM_BIN_SUBDIR: ${{ inputs.bin-subdir }}
+        DTM_IMPORT_FILES: ${{ inputs.import-files }}
+        DTM_EXPECT_DEVICES: ${{ inputs.expect-devices }}
+        DTM_LIST_DEVICES: ${{ inputs.list-devices }}
+      run: |
+        $ErrorActionPreference = 'Stop'
+        $bin  = Join-Path $env:DTM_AS_INSTALL $env:DTM_BIN_SUBDIR
+        $dll  = Join-Path $bin 'BR.AS.Hardware.CLI.dll'
+        $ps32 = Join-Path $env:WINDIR 'SysWOW64\WindowsPowerShell\v1.0\powershell.exe'
+
+        if (-not (Test-Path -LiteralPath $dll))  { throw "BR.AS.Hardware.CLI.dll not found at '$dll'. The AS6 install may be missing the DTM component." }
+        if (-not (Test-Path -LiteralPath $ps32)) { throw "32-bit Windows PowerShell not found at '$ps32'." }
+
+        # Split newline-separated inputs (commas are legal in Windows paths, so we
+        # do not split on them). Resolve import files against the workspace so a
+        # relative path means the same thing here as in the other actions.
+        function Split-Lines([string]$value) {
+          if (-not $value) { return @() }
+          $value -split "`r?`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ }
+        }
+
+        $imports = Split-Lines $env:DTM_IMPORT_FILES | ForEach-Object {
+          if ([System.IO.Path]::IsPathRooted($_)) { $_ } else { Join-Path $env:GITHUB_WORKSPACE $_ }
+        }
+        $expect = Split-Lines $env:DTM_EXPECT_DEVICES
+
+        # BR.AS.Hardware.CLI depends on 32-bit AS libraries, so it must run under
+        # SysWOW64 Windows PowerShell (64-bit pwsh errors on Import-Module). Invoke
+        # the checked-in script with the 32-bit host and pass values as real
+        # parameters — PowerShell handles all quoting, so there is no string
+        # building or escaping to get wrong.
+        $scriptPath = Join-Path $env:GITHUB_ACTION_PATH 'update_dtm_catalog.ps1'
+        if (-not (Test-Path -LiteralPath $scriptPath)) { throw "update_dtm_catalog.ps1 not found at '$scriptPath'." }
+
+        $childArgs = @('-BinPath', $bin)
+        if ($env:DTM_LIST_DEVICES) { $childArgs += @('-ListDevices', $env:DTM_LIST_DEVICES) }
+        if ($imports.Count) { $childArgs += '-ImportFiles';   $childArgs += $imports }
+        if ($expect.Count)  { $childArgs += '-ExpectDevices'; $childArgs += $expect }
+
+        Write-Host "Running BR.AS.Hardware.CLI (32-bit) from '$bin'"
+        & $ps32 -NoProfile -ExecutionPolicy Bypass -File $scriptPath @childArgs
+        $rc = $LASTEXITCODE
+        if ($rc -ne 0) { throw "DTM catalog update failed (exit code $rc)." }
+        Write-Host 'DTM catalog update complete.'
