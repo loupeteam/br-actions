@@ -19,15 +19,30 @@ inputs:
     description: 'Build mode passed to -buildMode: Build or Rebuild'
     required: false
     default: 'Build'
+  simulation:
+    description: >
+      Build for ARsim and pack a RUC package (adds -simulation -buildRUCPackage).
+      Set this when the package will be handed to the start-arsim action.
+    required: false
+    default: 'false'
+
+outputs:
+  ruc-package:
+    description: >
+      Path to the RUC package produced by a simulation build. Empty unless
+      `simulation` is true and exactly one package was found.
+    value: ${{ steps.build.outputs.ruc-package }}
 
 runs:
   using: 'composite'
   steps:
     - name: Build ${{ inputs.config }}
+      id: build
       shell: pwsh
       run: |
         python -u "${{ github.action_path }}/build_as_project.py" `
           --exe      "${{ inputs.exe-path }}" `
           --project  "${{ github.workspace }}/${{ inputs.project }}" `
           --config   "${{ inputs.config }}" `
-          --build-mode "${{ inputs.build-mode }}"
+          --build-mode "${{ inputs.build-mode }}" `
+          --simulation "${{ inputs.simulation }}"

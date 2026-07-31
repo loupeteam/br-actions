@@ -1,0 +1,85 @@
+# Example: build a project, run it on ARsim, test against it, tear it down.
+#
+# Copy into .github/workflows/ in your project repository and adjust the marked
+# lines. Needs a Windows runner with Automation Studio and PVI — see the
+# runs-on note below for which one.
+
+name: Integration tests
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+# One simulator per runner. Supersede an earlier run of the same ref rather than
+# queueing a second one behind it.
+concurrency:
+  group: arsim-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    # PUBLIC repository — the hosted, ephemeral Automation Studio image:
+    runs-on: [AS6-runner]
+    #
+    # PRIVATE repository — the self-hosted pool instead, which is restricted to
+    # private repositories. Replace the line above with:
+    #
+    #   runs-on:
+    #     group: private
+    #     labels: [AS6]        # or the label for the AS version you build
+    #
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      # The Automation Studio image ships Python. Kept here so this example also
+      # works on a runner that does not.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Find AS6 build executable
+        id: find-as
+        uses: loupeteam/br-actions/find-as6-build@v1
+
+      # simulation: true adds -simulation -buildRUCPackage and exposes the
+      # resulting package as an output, which start-arsim consumes directly.
+      - name: Build for simulation
+        id: build
+        uses: loupeteam/br-actions/build-as-project@v1
+        with:
+          exe-path: ${{ steps.find-as.outputs.exe-path }}
+          project: AsProject/AsProject.apj        # <-- your .apj
+          config: Intel                           # <-- your configuration
+          simulation: 'true'
+
+      # Keep arsim-dir SHORT and outside the workspace. Installed somewhere deep,
+      # the runtime starts and then exits before reaching RUN, with nothing in the
+      # logbook to explain why.
+      - name: Start ARsim
+        id: arsim
+        uses: loupeteam/br-actions/start-arsim@v1
+        with:
+          ruc-package: ${{ steps.build.outputs.ruc-package }}
+          arsim-dir: C:\arsim
+
+      - name: Run the test suite
+        run: echo "your test client goes here"     # <-- your tests
+
+      # if:always() so cleanup still runs when the tests fail or the job is
+      # cancelled. A simulator left behind holds the target's ports, and the next
+      # run then fails while DEPLOYING -- which points at the wrong step.
+      #
+      # A hard-killed job (cancellation past its grace period, a runner restart)
+      # runs no steps at all. start-arsim clears its own directory first, so a leak
+      # is recovered next run; to close the gap entirely, give the runner a
+      # job-completed hook (ACTIONS_RUNNER_HOOK_JOB_COMPLETED).
+      - name: Stop ARsim
+        if: always()
+        uses: loupeteam/br-actions/stop-arsim@v1
+        with:
+          arsim-dir: C:\arsim
