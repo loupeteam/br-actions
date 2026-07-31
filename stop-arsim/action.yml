@@ -1,0 +1,38 @@
+name: 'Stop ARsim'
+description: >
+  Stops running ARsim instances and verifies they are actually gone, rather than
+  trusting taskkill's exit code. Intended to be used with `if: always()` so a
+  simulator is never left holding the target's ports.
+author: 'Loupe'
+
+inputs:
+  arsim-dir:
+    description: >
+      Only stop instances installed under this directory. Leave empty to stop EVERY
+      ARsim on the machine — correct for a dedicated runner, destructive on a shared
+      or interactive one where somebody may be using a simulator for something else.
+    required: false
+    default: ''
+  fail-on-survivor:
+    description: >
+      Fail the step if a process survives. Worth leaving on: a survivor keeps holding
+      the target's ports, and the next run then fails while deploying, which points at
+      the wrong step. Set false when this runs as best-effort cleanup after a failure
+      you would rather see reported instead.
+    required: false
+    default: 'true'
+  verify-timeout:
+    description: 'Seconds to wait for the processes to actually disappear'
+    required: false
+    default: '10'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Stop ARsim
+      shell: pwsh
+      run: |
+        python -u "${{ github.action_path }}/stop_arsim.py" `
+          --dir               "${{ inputs.arsim-dir }}" `
+          --fail-on-survivor  "${{ inputs.fail-on-survivor }}" `
+          --verify-timeout    "${{ inputs.verify-timeout }}"

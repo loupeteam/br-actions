@@ -1,0 +1,93 @@
+name: 'Start ARsim'
+description: >
+  Installs a RUC package into an ARsim instance via PVITransfer, starts it, and
+  waits until the target is ready — judged by the OPC UA server port, PVI's
+  PLCStatus, or whichever answers first.
+author: 'Loupe'
+
+inputs:
+  ruc-package:
+    description: >
+      Path to RUCPackage.zip. May contain a wildcard, which is useful because the
+      CPU folder under Binaries/<config>/ depends on the target hardware — e.g.
+      "AsProject/Binaries/Intel/*/RUCPackage/RUCPackage.zip". Must match exactly one file.
+    required: true
+  arsim-dir:
+    description: >
+      Directory to install the simulator into. Keep it SHORT and outside the workspace:
+      Automation Studio tooling is sensitive to long paths, and the failure mode is that
+      the runtime starts and then exits before reaching RUN, with nothing in the logbook.
+      A stable path also means the runner registers the loader's firewall exception once
+      rather than on every run.
+    required: false
+    default: 'C:\arsim'
+  readiness:
+    description: >
+      How to decide the target is ready: "opcua" (TCP connect to the OPC UA port),
+      "pvi" (PVITransfer PLCStatus reports RUN), "any" (whichever answers first),
+      or "none" (start and return). See the README for which to pick.
+    required: false
+    default: 'any'
+  opcua-port:
+    description: 'OPC UA server port used by the "opcua" and "any" readiness checks'
+    required: false
+    default: '4840'
+  host:
+    description: 'Target address'
+    required: false
+    default: '127.0.0.1'
+  timeout:
+    description: 'Seconds to wait for readiness before failing'
+    required: false
+    default: '240'
+  create-timeout:
+    description: 'Seconds to allow for OfflineCommissioning to install the package'
+    required: false
+    default: '180'
+  stop-existing:
+    description: >
+      Stop an ARsim already running IN THIS DIRECTORY before installing — it would
+      otherwise keep the directory locked. Scoped deliberately: a machine can run
+      several simulators at once, each bound to its own address, and this action is
+      only entitled to replace the one it is about to overwrite. Use the stop-arsim
+      action to clear everything.
+    required: false
+    default: 'true'
+  pvi-transfer:
+    description: >
+      Path to PVITransfer.exe. Defaults to the standard PVI install location, or the
+      BR_PVI_TRANSFER_PATH environment variable if set on the runner.
+    required: false
+    default: ''
+
+outputs:
+  arsim-dir:
+    description: 'Absolute path to the ARsim installation directory'
+    value: ${{ steps.start.outputs.arsim-dir }}
+  pid:
+    description: 'Process id of the launched loader'
+    value: ${{ steps.start.outputs.pid }}
+  ready-via:
+    description: 'Which check reported ready: opcua, pvi, or none'
+    value: ${{ steps.start.outputs.ready-via }}
+  mode:
+    description: 'Last AR operating mode reported by PVI, when it answered at all'
+    value: ${{ steps.start.outputs.mode }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Start ARsim
+      id: start
+      shell: pwsh
+      run: |
+        python -u "${{ github.action_path }}/start_arsim.py" `
+          --ruc            "${{ inputs.ruc-package }}" `
+          --dir            "${{ inputs.arsim-dir }}" `
+          --host           "${{ inputs.host }}" `
+          --opcua-port     "${{ inputs.opcua-port }}" `
+          --readiness      "${{ inputs.readiness }}" `
+          --timeout        "${{ inputs.timeout }}" `
+          --create-timeout "${{ inputs.create-timeout }}" `
+          --stop-existing  "${{ inputs.stop-existing }}" `
+          --pvi-transfer   "${{ inputs.pvi-transfer }}"
