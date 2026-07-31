@@ -20,6 +20,25 @@ Reusable GitHub Actions composite actions for building and exporting
 - Python 3.x available on the runner PATH (or via `actions/setup-python` in the calling workflow)
 - PVI installed, for `start-arsim` / `stop-arsim` (they drive `PVITransfer.exe`)
 
+### Choosing a runner
+
+Which runner a repository can use depends on whether it is public or private:
+
+```yaml
+# Public repository — hosted, ephemeral Automation Studio image
+runs-on: [AS6-runner]
+
+# Private repository — the self-hosted pool, which is restricted to private repos
+runs-on:
+  group: private
+  labels: [AS6]
+```
+
+Because `find-as6-build` discovers Automation Studio at runtime, the same workflow
+shape works on either. `start-arsim` discovers `PVITransfer.exe` the same way, for the
+same reason: the install root differs between a workstation-style install and a runner
+image, and neither is more correct than the other.
+
 ## Usage
 
 ```yaml
@@ -229,7 +248,7 @@ much they need to run:
 |---|---|---|---|
 | **Logic** | `ubuntu-latest` + `windows-latest` | nothing | every push and PR |
 | **Action wiring** | `windows-latest` (hosted) | nothing | every push and PR |
-| **Integration** | self-hosted | Automation Studio, PVI, a project | manual only |
+| **Integration** | `AS6-runner` | Automation Studio, PVI, a project | manual only |
 
 **Logic** runs `tests/test_arsim.py` — plain `unittest`, no dependencies, a few
 seconds. It covers the parts that decide things: `PLCStatus` log parsing, installation
@@ -260,7 +279,14 @@ gh workflow run test.yml -f project=AsProject/AsProject.apj -f config=Intel
 
 It runs the full chain — `find-as6-build` → `build-as-project` (with `simulation`) →
 `start-arsim` → `stop-arsim` — and fails if `start-arsim` reports ready without naming
-which check answered.
+which check answered. It runs on `AS6-runner`, since this repository is public and the
+self-hosted pool is restricted to private repositories.
+
+Note that the Automation Studio image is built to *build* projects; whether it also
+carries PVI, which `start-arsim` needs, is worth confirming on the first run. If it does
+not, `start-arsim` fails with a message naming the roots it searched, and the options
+are to add PVI to the image or to run this layer from a private repository against the
+self-hosted pool.
 
 ## License
 

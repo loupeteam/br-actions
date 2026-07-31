@@ -47,8 +47,22 @@ DETACHED_PROCESS = 0x00000008
 # Every process image that makes up a running ARsim instance.
 ARSIM_IMAGES = ('AR000.exe', 'ar000loader.exe')
 
-DEFAULT_PVI_TRANSFER = (
-    r'C:\Program Files (x86)\BRAutomation\PVI6\PVI\Tools\PVITransfer\PVITransfer.exe'
+# B&R installs under more than one root, and which one is in play depends on the
+# machine: an image that installs to C:\BrAutomation and a workstation-style
+# install under Program Files are both normal. find-as6-build searches the same
+# two roots for the same reason.
+PVI_INSTALL_ROOTS = (
+    r'C:\BrAutomation',
+    r'C:\Program Files (x86)\BRAutomation',
+    r'C:\Program Files\BRAutomation',
+)
+
+# PVI's layout has varied across versions, so match the shapes rather than
+# naming one. Sorted descending, so a newer version wins over an older one.
+PVI_TRANSFER_PATTERNS = (
+    os.path.join('PVI*', 'PVI', 'Tools', 'PVITransfer', 'PVITransfer.exe'),
+    os.path.join('PVI', 'V*', 'PVI', 'Tools', 'PVITransfer', 'PVITransfer.exe'),
+    os.path.join('PVI*', '**', 'PVITransfer.exe'),
 )
 
 # PIL PLCStatus raw value -> AR operating mode. WarmStart/ColdStart both mean
@@ -77,13 +91,33 @@ def fail(message: str) -> None:
     sys.exit(1)
 
 
+def search_pvi_transfer(roots=PVI_INSTALL_ROOTS):
+    """Find PVITransfer.exe under the known B&R install roots. None if absent."""
+    for root in roots:
+        if not os.path.isdir(root):
+            continue
+        for pattern in PVI_TRANSFER_PATTERNS:
+            matches = glob.glob(os.path.join(root, pattern), recursive=True)
+            if matches:
+                # Descending, so PVI6 beats PVI4 and V4.9 beats V4.8.
+                return sorted(matches, reverse=True)[0]
+    return None
+
+
 def resolve_pvi_transfer(explicit: str = '') -> str:
-    for candidate in (explicit, os.environ.get('BR_PVI_TRANSFER_PATH', ''), DEFAULT_PVI_TRANSFER):
+    for candidate in (explicit, os.environ.get('BR_PVI_TRANSFER_PATH', '')):
         if candidate and os.path.isfile(candidate):
             return candidate
+
+    found = search_pvi_transfer()
+    if found:
+        return found
+
     fail(
-        'PVITransfer.exe not found. Install PVI on the runner, set the '
-        'BR_PVI_TRANSFER_PATH environment variable, or pass pvi-transfer.'
+        'PVITransfer.exe not found. Searched: '
+        + ', '.join(PVI_INSTALL_ROOTS)
+        + '. Install PVI on the runner, set the BR_PVI_TRANSFER_PATH environment '
+          'variable, or pass the pvi-transfer input.'
     )
 
 

@@ -148,6 +148,52 @@ class RucResolution(unittest.TestCase):
         self.assertIsNone(build_as_project.find_ruc_package(self.root, 'Intel'))
 
 
+class PviDiscovery(unittest.TestCase):
+    """B&R installs under more than one root, and PVI's layout varies by version.
+
+    Hard-coding one path means the action works on a workstation-style install and
+    silently fails on an image that installs somewhere else.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = self.tmp.name
+        self.addCleanup(self.tmp.cleanup)
+
+    def make(self, *parts):
+        path = os.path.join(self.root, *parts)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        open(path, 'w').close()
+        return path
+
+    def test_versioned_product_folder(self):
+        made = self.make('PVI6', 'PVI', 'Tools', 'PVITransfer', 'PVITransfer.exe')
+        self.assertEqual(start_arsim.search_pvi_transfer([self.root]), made)
+
+    def test_version_subfolder_layout(self):
+        made = self.make('PVI', 'V4.9', 'PVI', 'Tools', 'PVITransfer', 'PVITransfer.exe')
+        self.assertEqual(start_arsim.search_pvi_transfer([self.root]), made)
+
+    def test_newest_version_wins(self):
+        self.make('PVI4', 'PVI', 'Tools', 'PVITransfer', 'PVITransfer.exe')
+        newer = self.make('PVI6', 'PVI', 'Tools', 'PVITransfer', 'PVITransfer.exe')
+        self.assertEqual(start_arsim.search_pvi_transfer([self.root]), newer)
+
+    def test_absent_is_none_not_an_exception(self):
+        self.assertIsNone(start_arsim.search_pvi_transfer([self.root]))
+
+    def test_missing_root_is_skipped(self):
+        made = self.make('PVI6', 'PVI', 'Tools', 'PVITransfer', 'PVITransfer.exe')
+        roots = [os.path.join(self.root, 'does-not-exist'), self.root]
+        self.assertEqual(start_arsim.search_pvi_transfer(roots), made)
+
+    def test_both_documented_install_roots_are_searched(self):
+        # Automation Studio lives under either of these depending on the machine;
+        # find-as6-build searches the same two.
+        self.assertIn(r'C:\BrAutomation', start_arsim.PVI_INSTALL_ROOTS)
+        self.assertIn(r'C:\Program Files (x86)\BRAutomation', start_arsim.PVI_INSTALL_ROOTS)
+
+
 class PortProbe(unittest.TestCase):
     def test_open_port_is_detected(self):
         listener = socket.socket()

@@ -87,11 +87,15 @@ jobs:
           Write-Host 'start-arsim failed as expected when PVITransfer is absent.'
 
   integration:
-    name: Integration (self-hosted, AS + PVI)
+    name: Integration (AS6-runner)
     # Manual only, and only when a project was named: it needs Automation Studio,
     # PVI, and a runner that has them. Everything above runs everywhere.
+    #
+    # AS6-runner is the hosted, ephemeral runner built from the Automation Studio
+    # image — the one public repositories use. The self-hosted pool is restricted
+    # to private repositories, so it is not an option here.
     if: github.event_name == 'workflow_dispatch' && inputs.project != ''
-    runs-on: [self-hosted, windows]
+    runs-on: [AS6-runner]
     steps:
       - uses: actions/checkout@v4
 

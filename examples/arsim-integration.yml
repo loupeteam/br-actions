@@ -1,7 +1,8 @@
 # Example: build a project, run it on ARsim, test against it, tear it down.
 #
 # Copy into .github/workflows/ in your project repository and adjust the marked
-# lines. Requires a self-hosted Windows runner with Automation Studio and PVI.
+# lines. Needs a Windows runner with Automation Studio and PVI — see the
+# runs-on note below for which one.
 
 name: Integration tests
 
@@ -21,11 +22,22 @@ permissions:
 
 jobs:
   test:
-    runs-on: [self-hosted, windows]
+    # PUBLIC repository — the hosted, ephemeral Automation Studio image:
+    runs-on: [AS6-runner]
+    #
+    # PRIVATE repository — the self-hosted pool instead, which is restricted to
+    # private repositories. Replace the line above with:
+    #
+    #   runs-on:
+    #     group: private
+    #     labels: [AS6]        # or the label for the AS version you build
+    #
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
 
+      # The Automation Studio image ships Python. Kept here so this example also
+      # works on a runner that does not.
       - uses: actions/setup-python@v5
         with:
           python-version: '3.x'
