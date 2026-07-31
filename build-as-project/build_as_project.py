@@ -18,7 +18,28 @@ import subprocess
 import sys
 
 
-def build(exe_path: str, project_apj: str, config: str, build_mode: str = 'Build') -> None:
+def find_ruc_package(project_dir: str, config: str):
+    """Locate the RUC package a simulation build produced.
+
+    The CPU folder under Binaries/<config>/ depends on the target hardware, so it
+    is globbed rather than named. Returns the path, or None if there is not
+    exactly one.
+    """
+    import glob
+    import os
+    pattern = os.path.join(project_dir, 'Binaries', config, '*', 'RUCPackage', 'RUCPackage.zip')
+    matches = sorted(glob.glob(pattern))
+    if len(matches) == 1:
+        return matches[0]
+    if not matches:
+        print(f'::warning::No RUC package found under {pattern}', flush=True)
+    else:
+        print(f'::warning::{len(matches)} RUC packages matched {pattern}; expected one', flush=True)
+    return None
+
+
+def build(exe_path: str, project_apj: str, config: str, build_mode: str = 'Build',
+          simulation: bool = False) -> None:
     # BR.AS.Build.exe requires an absolute path with Windows separators.
     # The runner's CWD is the workspace root, so relative paths (e.g. "example/As6Project/AsProject.apj")
     # resolve correctly via os.path.abspath, and os.path.normpath converts '/' to '\'.
@@ -40,6 +61,10 @@ def build(exe_path: str, project_apj: str, config: str, build_mode: str = 'Build
         sys.exit(1)
 
     cmd = [exe_path, project_apj, '-c', config, '-buildMode', build_mode, '-all']
+    if simulation:
+        # Produces the ARsim binaries and packs the RUC package that
+        # OfflineCommissioning (see the start-arsim action) installs.
+        cmd += ['-simulation', '-buildRUCPackage']
     print(f'Running: {" ".join(cmd)}', flush=True)
 
     # Run from the project directory — BR.AS.Build.exe resolves relative paths
@@ -81,6 +106,15 @@ def build(exe_path: str, project_apj: str, config: str, build_mode: str = 'Build
 
     print(f'Build completed successfully for config: {config}')
 
+    if simulation:
+        ruc = find_ruc_package(project_dir, config)
+        if ruc:
+            print(f'RUC package: {ruc}', flush=True)
+            github_output = os.environ.get('GITHUB_OUTPUT')
+            if github_output:
+                with open(github_output, 'a', encoding='utf-8') as handle:
+                    handle.write(f'ruc-package={ruc}\n')
+
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Build an AS6 project configuration')
@@ -88,9 +122,12 @@ if __name__ == '__main__':
     parser.add_argument('--project',    required=True,  help='Path to the .apj file')
     parser.add_argument('--config',     required=True,  help='Configuration name')
     parser.add_argument('--build-mode', default='Build', help='Build mode (Build or Rebuild)')
+    parser.add_argument('--simulation', default='',
+                        help='Build for ARsim and pack a RUC package (true/false)')
     args = parser.parse_args()
 
     # Treat empty/whitespace as unset (e.g. when a workflow forwards an
     # unset workflow_dispatch input via ${{ inputs.build-mode }}).
     build_mode = (args.build_mode or '').strip() or 'Build'
-    build(args.exe, args.project, args.config, build_mode)
+    simulation = str(args.simulation).strip().lower() in ('true', '1', 'yes')
+    build(args.exe, args.project, args.config, build_mode, simulation)

@@ -1,0 +1,134 @@
+name: Test
+
+# Tests the actions in this repository, in three layers of decreasing
+# availability and increasing realism:
+#
+#   logic         any hosted runner, seconds. The decision-making code.
+#   action-wiring hosted Windows. Proves action.yml -> script wiring works,
+#                 without Automation Studio or PVI.
+#   integration   self-hosted with AS + PVI + a real project. Manual only.
+#
+# The first two run on every push and PR, so a broken action is caught without
+# needing the hardware-ish prerequisites the third one has.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      project:
+        description: 'Integration test: path to a .apj, relative to the workspace'
+        required: false
+        default: ''
+      config:
+        description: 'Integration test: configuration name to build'
+        required: false
+        default: ''
+      arsim-dir:
+        description: 'Integration test: where to install the simulator'
+        required: false
+        default: 'C:\arsim-ci-test'
+
+permissions:
+  contents: read
+
+jobs:
+  logic:
+    name: Logic (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+      - name: Run tests
+        run: python -m unittest discover -s tests -v
+
+  action-wiring:
+    name: Action wiring (hosted Windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      # Nothing is running on a hosted runner, so this exercises the "nothing to
+      # do" path -- which must SUCCEED, because the action is meant to be used
+      # with if:always() and would otherwise redden every clean run.
+      - name: stop-arsim finds nothing and succeeds
+        uses: ./stop-arsim
+        with:
+          arsim-dir: 'C:\no-arsim-installed-here'
+
+      # A hosted runner has no PVI, so start-arsim must fail with the message that
+      # says so, rather than something obscure from further in. Asserting on the
+      # failure is the only way to prove the diagnostic actually reaches the user.
+      - name: start-arsim without PVI fails clearly
+        id: no-pvi
+        continue-on-error: true
+        uses: ./start-arsim
+        with:
+          ruc-package: 'does-not-matter.zip'
+          arsim-dir: 'C:\no-arsim-installed-here'
+          pvi-transfer: 'C:\definitely\not\here\PVITransfer.exe'
+
+      - name: Check it failed for the right reason
+        shell: pwsh
+        run: |
+          if ('${{ steps.no-pvi.outcome }}' -ne 'failure') {
+            throw "start-arsim should have failed without PVITransfer, but the step reported '${{ steps.no-pvi.outcome }}'."
+          }
+          Write-Host 'start-arsim failed as expected when PVITransfer is absent.'
+
+  integration:
+    name: Integration (self-hosted, AS + PVI)
+    # Manual only, and only when a project was named: it needs Automation Studio,
+    # PVI, and a runner that has them. Everything above runs everywhere.
+    if: github.event_name == 'workflow_dispatch' && inputs.project != ''
+    runs-on: [self-hosted, windows]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Find AS6 build executable
+        id: find-as
+        uses: ./find-as6-build
+
+      - name: Build for simulation
+        id: build
+        uses: ./build-as-project
+        with:
+          exe-path: ${{ steps.find-as.outputs.exe-path }}
+          project: ${{ inputs.project }}
+          config: ${{ inputs.config }}
+          simulation: 'true'
+
+      - name: Start ARsim
+        id: arsim
+        uses: ./start-arsim
+        with:
+          ruc-package: ${{ steps.build.outputs.ruc-package }}
+          arsim-dir: ${{ inputs.arsim-dir }}
+
+      - name: Report what came up
+        shell: pwsh
+        run: |
+          Write-Host "arsim-dir : ${{ steps.arsim.outputs.arsim-dir }}"
+          Write-Host "pid       : ${{ steps.arsim.outputs.pid }}"
+          Write-Host "ready-via : ${{ steps.arsim.outputs.ready-via }}"
+          Write-Host "mode      : ${{ steps.arsim.outputs.mode }}"
+          if ('${{ steps.arsim.outputs.ready-via }}' -eq '') {
+            throw 'start-arsim reported ready but named no check.'
+          }
+
+      # Always, and last: a simulator left running holds the target's ports.
+      - name: Stop ARsim
+        if: always()
+        uses: ./stop-arsim
+        with:
+          arsim-dir: ${{ inputs.arsim-dir }}

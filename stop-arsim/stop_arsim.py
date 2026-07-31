@@ -96,6 +96,11 @@ def tasklist_processes():
 
 def in_directory(process: dict, root: str) -> bool:
     root = os.path.normcase(os.path.normpath(os.path.abspath(root)))
+    # Compare against root + separator, so a sibling whose name merely EXTENDS the
+    # root ("C:\arsim2" against "C:\arsim") is not treated as living inside it.
+    # Getting this wrong means stopping somebody else's simulator.
+    if not root.endswith(os.sep):
+        root += os.sep
     path = os.path.normcase(process.get('path') or '')
     cmdline = os.path.normcase(process.get('cmdline') or '')
     return path.startswith(root) or root in cmdline

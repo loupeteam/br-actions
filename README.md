@@ -52,17 +52,25 @@ Reusable GitHub Actions composite actions for building and exporting
 
 ## Running a project on ARsim
 
-To build a project, run it on the simulator, and exercise it from a test client, add
-`-simulation -buildRUCPackage` to the build and then hand the resulting RUC package to
-`start-arsim`:
+Build with `simulation: true` to produce a RUC package, then hand it to `start-arsim`.
+A complete, copy-pasteable workflow is in
+[`examples/arsim-integration.yml`](examples/arsim-integration.yml); the short version:
 
 ```yaml
+- name: Build for simulation
+  id: build
+  uses: loupeteam/br-actions/build-as-project@v1
+  with:
+    exe-path:   ${{ steps.find-as.outputs.exe-path }}
+    project:    AsProject/AsProject.apj
+    config:     Intel
+    simulation: 'true'
+
 - name: Start ARsim
   id: arsim
   uses: loupeteam/br-actions/start-arsim@v1
   with:
-    # The CPU folder depends on the target hardware, so match it with a wildcard.
-    ruc-package: example/AsProject/Binaries/Intel/*/RUCPackage/RUCPackage.zip
+    ruc-package: ${{ steps.build.outputs.ruc-package }}
     arsim-dir:   C:\arsim
 
 - name: Run tests against the simulator
@@ -75,6 +83,13 @@ To build a project, run it on the simulator, and exercise it from a test client,
   uses: loupeteam/br-actions/stop-arsim@v1
   with:
     arsim-dir: C:\arsim
+```
+
+`ruc-package` also accepts a wildcard, for callers that build some other way — the CPU
+folder under `Binaries/<config>/` depends on the target hardware:
+
+```yaml
+    ruc-package: AsProject/Binaries/Intel/*/RUCPackage/RUCPackage.zip
 ```
 
 ### Choosing a readiness check
@@ -138,6 +153,13 @@ Override discovery by setting `BR_AS6_BUILD_PATH` as a runner environment variab
 | `project` | yes | — | Path to `.apj` file |
 | `config` | yes | — | Configuration name (e.g. `Intel`) |
 | `build-mode` | no | `Build` | `Build` or `Rebuild` |
+| `simulation` | no | `false` | Add `-simulation -buildRUCPackage` for an ARsim build |
+
+**Outputs**
+
+| Name | Description |
+|------|-------------|
+| `ruc-package` | Path to the RUC package a simulation build produced. Empty unless `simulation` is true and exactly one package was found. |
 
 ### `export-as-library`
 
@@ -197,6 +219,48 @@ output/
       SG4/  {Library}.h  lib{Library}.a  {Library}.br
         Arm/  {Library}.h  lib{Library}.a  {Library}.br
 ```
+
+## Testing the actions
+
+`.github/workflows/test.yml` tests this repository in three layers, ordered by how
+much they need to run:
+
+| Layer | Runs on | Needs | When |
+|---|---|---|---|
+| **Logic** | `ubuntu-latest` + `windows-latest` | nothing | every push and PR |
+| **Action wiring** | `windows-latest` (hosted) | nothing | every push and PR |
+| **Integration** | self-hosted | Automation Studio, PVI, a project | manual only |
+
+**Logic** runs `tests/test_arsim.py` — plain `unittest`, no dependencies, a few
+seconds. It covers the parts that decide things: `PLCStatus` log parsing, installation
+directory scoping, RUC package resolution, and the input coercion that lets a workflow
+forward an unset input. Run it locally with:
+
+```bash
+python -m unittest discover -s tests -v
+```
+
+**Action wiring** invokes the composite actions themselves on a hosted runner, proving
+`action.yml` → script wiring works without Automation Studio or PVI. It asserts two
+things a reader might not expect to be worth testing:
+
+- `stop-arsim` with nothing running must **succeed**. It is used with `if: always()`,
+  so a non-zero exit for "nothing to do" would redden every otherwise-clean run.
+- `start-arsim` without PVI must fail with the message that *says* PVI is missing.
+  Asserting on the failure is the only way to know the diagnostic reaches the user
+  rather than something obscure from further in.
+
+**Integration** is the only layer that starts a real simulator, and it needs a project
+to build. There is no example project in this repository, so it takes the path as a
+dispatch input:
+
+```bash
+gh workflow run test.yml -f project=AsProject/AsProject.apj -f config=Intel
+```
+
+It runs the full chain — `find-as6-build` → `build-as-project` (with `simulation`) →
+`start-arsim` → `stop-arsim` — and fails if `start-arsim` reports ready without naming
+which check answered.
 
 ## License
 
