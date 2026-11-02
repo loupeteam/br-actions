@@ -1,0 +1,203 @@
+name: AS6 Program Publish
+
+# Reusable build and GitHub Packages publish of an LPM program package.
+# Programs are published as SOURCE, with no binary export. The example project
+# is still built to catch source errors before shipping the tarball.
+# The calling job must grant `packages: write`.
+# See "Reusable workflows" in the README for how to call it.
+
+on:
+  workflow_call:
+    inputs:
+      project:
+        description: 'Path to the .apj project file, relative to the workspace root'
+        required: true
+        type: string
+      package-dir:
+        description: 'Directory of the program package. Its package.json must have lpm.type == "program"'
+        required: true
+        type: string
+      version:
+        description: 'Version to publish. Empty means use the pushed tag'
+        required: false
+        type: string
+        default: ''
+      artifact-prefix:
+        description: 'Name prefix of the uploaded package artifact'
+        required: false
+        type: string
+        default: 'package'
+      configs:
+        description: 'Space-separated configurations to build. Supported: Intel, ARM, ARsim'
+        required: false
+        type: string
+        default: 'Intel ARM'
+      runner:
+        description: 'Runner label with Automation Studio 6 installed'
+        required: false
+        type: string
+        default: 'AS6-runner'
+      pre-build-script:
+        description: 'PowerShell script in the calling repo, run after checkout and before the build'
+        required: false
+        type: string
+        default: ''
+      post-build-script:
+        description: 'PowerShell script in the calling repo, run after the build and before packaging'
+        required: false
+        type: string
+        default: ''
+
+jobs:
+  build-publish:
+    runs-on: ${{ inputs.runner }}
+
+    permissions:
+      contents: read
+      packages: write
+
+    env:
+      PROJECT:     ${{ inputs.project }}
+      CONFIGS:     ${{ inputs.configs }}
+      PACKAGE_DIR: ${{ inputs.package-dir }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '20'
+          registry-url: 'https://npm.pkg.github.com'
+          scope: '@loupeteam'
+
+      - name: Resolve version
+        id: version
+        shell: pwsh
+        env:
+          VERSION_INPUT: ${{ inputs.version }}
+        run: |
+          if ($env:VERSION_INPUT) {
+            $ver = $env:VERSION_INPUT -replace '^v', ''
+          } elseif ($env:GITHUB_REF_TYPE -eq 'tag') {
+            $ver = $env:GITHUB_REF_NAME -replace '^v', ''
+          }
+          if (-not $ver) {
+            Write-Error "Could not determine version. Push a v*.*.* tag or supply the version input."
+            exit 1
+          }
+          Write-Host "Publishing version: $ver"
+          "version=$ver" | Out-File -Append -Encoding utf8 -FilePath $env:GITHUB_OUTPUT
+
+      - name: Resolve project paths
+        id: project
+        shell: pwsh
+        run: |
+          if (-not (Test-Path $env:PROJECT)) { Write-Error "Project file not found: $env:PROJECT"; exit 1 }
+          $configs = -split $env:CONFIGS
+          if (-not $configs) { Write-Error "No configurations given"; exit 1 }
+          foreach ($config in $configs) {
+            if ($config -notin 'Intel', 'ARM', 'ARsim') { Write-Error "Unsupported configuration: $config"; exit 1 }
+          }
+          $dir = (Split-Path $env:PROJECT -Parent) -replace '\\', '/'
+          "dir=$dir" | Out-File -Append -Encoding utf8 -FilePath $env:GITHUB_OUTPUT
+
+      - name: Verify program package
+        shell: pwsh
+        run: |
+          $pkgPath = Join-Path $env:PACKAGE_DIR "package.json"
+          if (-not (Test-Path $pkgPath)) {
+            Write-Error "package.json not found at $pkgPath"
+            exit 1
+          }
+          $pkg = Get-Content $pkgPath -Raw | ConvertFrom-Json
+          if ($pkg.lpm.type -ne 'program') {
+            Write-Error "Expected lpm.type == 'program' in $pkgPath, got '$($pkg.lpm.type)'. This workflow is for program packages only."
+            exit 1
+          }
+          Write-Host "Confirmed program package: $($pkg.name)"
+
+      - name: Find AS6 build executable
+        uses: loupeteam/br-actions/find-as6-build@f6f1ec537a8e621889a19279a4886aaf46d8a2ea # v1.0.5
+        id: find-as
+
+      - name: Run pre-build script
+        if: inputs.pre-build-script != ''
+        shell: pwsh
+        env:
+          SCRIPT: ${{ inputs.pre-build-script }}
+        run: |
+          & (Join-Path $env:GITHUB_WORKSPACE $env:SCRIPT)
+
+      - name: Build Intel
+        if: contains(format(' {0} ', inputs.configs), ' Intel ')
+        uses: loupeteam/br-actions/build-as-project@f6f1ec537a8e621889a19279a4886aaf46d8a2ea # v1.0.5
+        with:
+          exe-path: ${{ steps.find-as.outputs.exe-path }}
+          project:  ${{ inputs.project }}
+          config:   Intel
+
+      - name: Build ARM
+        if: contains(format(' {0} ', inputs.configs), ' ARM ')
+        uses: loupeteam/br-actions/build-as-project@f6f1ec537a8e621889a19279a4886aaf46d8a2ea # v1.0.5
+        with:
+          exe-path: ${{ steps.find-as.outputs.exe-path }}
+          project:  ${{ inputs.project }}
+          config:   ARM
+
+      - name: Build ARsim
+        if: contains(format(' {0} ', inputs.configs), ' ARsim ')
+        uses: loupeteam/br-actions/build-as-project@f6f1ec537a8e621889a19279a4886aaf46d8a2ea # v1.0.5
+        with:
+          exe-path: ${{ steps.find-as.outputs.exe-path }}
+          project:  ${{ inputs.project }}
+          config:   ARsim
+
+      - name: Run post-build script
+        if: inputs.post-build-script != ''
+        shell: pwsh
+        env:
+          SCRIPT: ${{ inputs.post-build-script }}
+        run: |
+          & (Join-Path $env:GITHUB_WORKSPACE $env:SCRIPT)
+
+      - name: Set package version
+        shell: pwsh
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          Push-Location $env:PACKAGE_DIR
+          npm version $env:VERSION --no-git-tag-version --allow-same-version
+          Pop-Location
+
+      - name: Copy README into package
+        shell: pwsh
+        run: |
+          if (Test-Path README.md) {
+            Copy-Item -Path README.md -Destination "$env:PACKAGE_DIR/README.md" -Force
+          }
+
+      - name: Publish to GitHub Packages
+        shell: pwsh
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          Push-Location $env:PACKAGE_DIR
+          npm publish
+          Pop-Location
+
+      - name: Upload package artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ${{ inputs.artifact-prefix }}-${{ steps.version.outputs.version }}
+          path: ${{ inputs.package-dir }}/
+          if-no-files-found: error
+
+      - name: Upload build diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: BuildDiagnostics
+          path: ${{ steps.project.outputs.dir }}/Temp/BuildDiagnostics.log
+          if-no-files-found: ignore

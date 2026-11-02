@@ -1,0 +1,217 @@
+name: AS6 Library Publish
+
+# Reusable build, binary export, and GitHub Packages publish of an LPM library.
+# The calling job must grant `packages: write`.
+# See "Reusable workflows" in the README for how to call it.
+
+on:
+  workflow_call:
+    inputs:
+      project:
+        description: 'Path to the .apj project file, relative to the workspace root'
+        required: true
+        type: string
+      library:
+        description: 'Library name'
+        required: true
+        type: string
+      library-dir:
+        description: 'Library source directory'
+        required: true
+        type: string
+      version:
+        description: 'Version to publish. Empty means use the pushed tag'
+        required: false
+        type: string
+        default: ''
+      configs:
+        description: 'Space-separated configurations to build and export. Supported: Intel, ARM, ARsim'
+        required: false
+        type: string
+        default: 'Intel ARM'
+      copy-readme:
+        description: 'Copy the repo README.md into the published package'
+        required: false
+        type: boolean
+        default: false
+      runner:
+        description: 'Runner label with Automation Studio 6 installed'
+        required: false
+        type: string
+        default: 'AS6-runner'
+      pre-build-script:
+        description: 'PowerShell script in the calling repo, run after checkout and before the build'
+        required: false
+        type: string
+        default: ''
+      post-build-script:
+        description: 'PowerShell script in the calling repo, run after the build and before the export'
+        required: false
+        type: string
+        default: ''
+
+jobs:
+  build-export-publish:
+    runs-on: ${{ inputs.runner }}
+
+    permissions:
+      contents: read
+      packages: write
+
+    env:
+      PROJECT:     ${{ inputs.project }}
+      CONFIGS:     ${{ inputs.configs }}
+      LIBRARY:     ${{ inputs.library }}
+      LIBRARY_DIR: ${{ inputs.library-dir }}
+      EXPORT_DIR:  export
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '20'
+          registry-url: 'https://npm.pkg.github.com'
+          scope: '@loupeteam'
+
+      - name: Resolve version
+        id: version
+        shell: pwsh
+        env:
+          VERSION_INPUT: ${{ inputs.version }}
+        run: |
+          if ($env:VERSION_INPUT) {
+            $ver = $env:VERSION_INPUT -replace '^v', ''
+          } elseif ($env:GITHUB_REF_TYPE -eq 'tag') {
+            $ver = $env:GITHUB_REF_NAME -replace '^v', ''
+          }
+          if (-not $ver) {
+            Write-Error "Could not determine version. Push a v*.*.* tag or supply the version input."
+            exit 1
+          }
+          Write-Host "Publishing version: $ver"
+          "version=$ver" | Out-File -Append -Encoding utf8 -FilePath $env:GITHUB_OUTPUT
+
+      - name: Resolve project paths
+        id: project
+        shell: pwsh
+        run: |
+          if (-not (Test-Path $env:PROJECT)) { Write-Error "Project file not found: $env:PROJECT"; exit 1 }
+          $configs = -split $env:CONFIGS
+          if (-not $configs) { Write-Error "No configurations given"; exit 1 }
+          foreach ($config in $configs) {
+            if ($config -notin 'Intel', 'ARM', 'ARsim') { Write-Error "Unsupported configuration: $config"; exit 1 }
+          }
+          $dir = (Split-Path $env:PROJECT -Parent) -replace '\\', '/'
+          "dir=$dir" | Out-File -Append -Encoding utf8 -FilePath $env:GITHUB_OUTPUT
+
+      - name: Find AS6 build executable
+        uses: loupeteam/br-actions/find-as6-build@f6f1ec537a8e621889a19279a4886aaf46d8a2ea # v1.0.5
+        id: find-as
+
+      - name: Run pre-build script
+        if: inputs.pre-build-script != ''
+        shell: pwsh
+        env:
+          SCRIPT: ${{ inputs.pre-build-script }}
+        run: |
+          & (Join-Path $env:GITHUB_WORKSPACE $env:SCRIPT)
+
+      - name: Build Intel
+        if: contains(format(' {0} ', inputs.configs), ' Intel ')
+        uses: loupeteam/br-actions/build-as-project@f6f1ec537a8e621889a19279a4886aaf46d8a2ea # v1.0.5
+        with:
+          exe-path: ${{ steps.find-as.outputs.exe-path }}
+          project:  ${{ inputs.project }}
+          config:   Intel
+
+      - name: Build ARM
+        if: contains(format(' {0} ', inputs.configs), ' ARM ')
+        uses: loupeteam/br-actions/build-as-project@f6f1ec537a8e621889a19279a4886aaf46d8a2ea # v1.0.5
+        with:
+          exe-path: ${{ steps.find-as.outputs.exe-path }}
+          project:  ${{ inputs.project }}
+          config:   ARM
+
+      - name: Build ARsim
+        if: contains(format(' {0} ', inputs.configs), ' ARsim ')
+        uses: loupeteam/br-actions/build-as-project@f6f1ec537a8e621889a19279a4886aaf46d8a2ea # v1.0.5
+        with:
+          exe-path: ${{ steps.find-as.outputs.exe-path }}
+          project:  ${{ inputs.project }}
+          config:   ARsim
+
+      - name: Run post-build script
+        if: inputs.post-build-script != ''
+        shell: pwsh
+        env:
+          SCRIPT: ${{ inputs.post-build-script }}
+        run: |
+          & (Join-Path $env:GITHUB_WORKSPACE $env:SCRIPT)
+
+      - name: Export library
+        uses: loupeteam/br-actions/export-as-library@f6f1ec537a8e621889a19279a4886aaf46d8a2ea # v1.0.5
+        with:
+          project-dir: ${{ steps.project.outputs.dir }}
+          library:     ${{ inputs.library }}
+          library-dir: ${{ inputs.library-dir }}
+          configs:     ${{ inputs.configs }}
+          output:      ${{ env.EXPORT_DIR }}
+          as-install:  ${{ steps.find-as.outputs.install-path }}
+
+      - name: Locate exported version directory
+        id: export-dir
+        shell: pwsh
+        run: |
+          $path = Get-ChildItem "$env:EXPORT_DIR/$env:LIBRARY" -Directory |
+                  Select-Object -First 1 -ExpandProperty FullName
+          if (-not $path) {
+            Write-Error "No exported version directory found under $env:EXPORT_DIR/$env:LIBRARY"
+            exit 1
+          }
+          Write-Host "Exported version directory: $path"
+          "path=$path" | Out-File -Append -Encoding utf8 -FilePath $env:GITHUB_OUTPUT
+
+      - name: Generate package.json
+        uses: loupeteam/br-actions/prepare-lpm-package@f6f1ec537a8e621889a19279a4886aaf46d8a2ea # v1.0.5
+        with:
+          library-dir: ${{ inputs.library-dir }}
+          output-dir:  ${{ steps.export-dir.outputs.path }}
+          version:     ${{ steps.version.outputs.version }}
+
+      - name: Copy README into package
+        if: inputs.copy-readme
+        shell: pwsh
+        env:
+          EXPORT_PATH: ${{ steps.export-dir.outputs.path }}
+        run: |
+          Copy-Item -Path README.md -Destination "$env:EXPORT_PATH/README.md" -Force
+
+      - name: Publish to GitHub Packages
+        shell: pwsh
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          EXPORT_PATH: ${{ steps.export-dir.outputs.path }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          Write-Host "Publishing @loupeteam/$($env:LIBRARY.ToLower())@$env:VERSION"
+          Push-Location $env:EXPORT_PATH
+          npm publish
+          Pop-Location
+
+      - name: Upload exported library artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ${{ env.LIBRARY }}-${{ steps.version.outputs.version }}
+          path: ${{ env.EXPORT_DIR }}/${{ env.LIBRARY }}/
+          if-no-files-found: error
+
+      - name: Upload build diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: BuildDiagnostics
+          path: ${{ steps.project.outputs.dir }}/Temp/BuildDiagnostics.log
+          if-no-files-found: ignore
