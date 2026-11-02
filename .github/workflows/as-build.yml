@@ -1,0 +1,140 @@
+name: AS6 Build
+
+# Reusable PR/manual build of an Automation Studio 6 project.
+# See "Reusable workflows" in the README for how to call it.
+
+on:
+  workflow_call:
+    inputs:
+      project:
+        description: 'Path to the .apj project file, relative to the workspace root'
+        required: true
+        type: string
+      configs:
+        description: 'Space-separated configurations to build. Supported: Intel, ARM, ARsim'
+        required: false
+        type: string
+        default: 'Intel ARM'
+      build-mode:
+        description: 'Build or Rebuild. Empty means Build'
+        required: false
+        type: string
+        default: 'Build'
+      ref:
+        description: 'Branch, tag, or SHA to check out. Empty means the triggering ref'
+        required: false
+        type: string
+        default: ''
+      runner:
+        description: 'Runner label with Automation Studio 6 installed'
+        required: false
+        type: string
+        default: 'AS6-runner'
+      pre-build-script:
+        description: 'PowerShell script in the calling repo, run after checkout and before the build'
+        required: false
+        type: string
+        default: ''
+      post-build-script:
+        description: 'PowerShell script in the calling repo, run in the same workspace after the build'
+        required: false
+        type: string
+        default: ''
+      upload-build-output:
+        description: 'Upload the project Binaries folder as the BuildOutput artifact, for later jobs'
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  build:
+    runs-on: ${{ inputs.runner }}
+
+    permissions:
+      contents: read
+
+    env:
+      PROJECT: ${{ inputs.project }}
+      CONFIGS: ${{ inputs.configs }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ inputs.ref }}
+
+      - name: Resolve project paths
+        id: project
+        shell: pwsh
+        run: |
+          if (-not (Test-Path $env:PROJECT)) { Write-Error "Project file not found: $env:PROJECT"; exit 1 }
+          $configs = -split $env:CONFIGS
+          if (-not $configs) { Write-Error "No configurations given"; exit 1 }
+          foreach ($config in $configs) {
+            if ($config -notin 'Intel', 'ARM', 'ARsim') { Write-Error "Unsupported configuration: $config"; exit 1 }
+          }
+          $dir = (Split-Path $env:PROJECT -Parent) -replace '\\', '/'
+          "dir=$dir" | Out-File -Append -Encoding utf8 -FilePath $env:GITHUB_OUTPUT
+
+      - name: Find AS6 build executable
+        uses: loupeteam/br-actions/find-as6-build@f6f1ec537a8e621889a19279a4886aaf46d8a2ea # v1.0.5
+        id: find-as
+
+      - name: Run pre-build script
+        if: inputs.pre-build-script != ''
+        shell: pwsh
+        env:
+          SCRIPT: ${{ inputs.pre-build-script }}
+        run: |
+          & (Join-Path $env:GITHUB_WORKSPACE $env:SCRIPT)
+
+      - name: Build Intel
+        if: contains(format(' {0} ', inputs.configs), ' Intel ')
+        uses: loupeteam/br-actions/build-as-project@f6f1ec537a8e621889a19279a4886aaf46d8a2ea # v1.0.5
+        with:
+          exe-path:   ${{ steps.find-as.outputs.exe-path }}
+          project:    ${{ inputs.project }}
+          config:     Intel
+          build-mode: ${{ inputs.build-mode || 'Build' }}
+
+      - name: Build ARM
+        if: contains(format(' {0} ', inputs.configs), ' ARM ')
+        uses: loupeteam/br-actions/build-as-project@f6f1ec537a8e621889a19279a4886aaf46d8a2ea # v1.0.5
+        with:
+          exe-path:   ${{ steps.find-as.outputs.exe-path }}
+          project:    ${{ inputs.project }}
+          config:     ARM
+          build-mode: ${{ inputs.build-mode || 'Build' }}
+
+      - name: Build ARsim
+        if: contains(format(' {0} ', inputs.configs), ' ARsim ')
+        uses: loupeteam/br-actions/build-as-project@f6f1ec537a8e621889a19279a4886aaf46d8a2ea # v1.0.5
+        with:
+          exe-path:   ${{ steps.find-as.outputs.exe-path }}
+          project:    ${{ inputs.project }}
+          config:     ARsim
+          build-mode: ${{ inputs.build-mode || 'Build' }}
+
+      - name: Run post-build script
+        if: inputs.post-build-script != ''
+        shell: pwsh
+        env:
+          SCRIPT: ${{ inputs.post-build-script }}
+        run: |
+          & (Join-Path $env:GITHUB_WORKSPACE $env:SCRIPT)
+
+      - name: Upload build output
+        if: inputs.upload-build-output
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: BuildOutput
+          path: ${{ steps.project.outputs.dir }}/Binaries/
+          if-no-files-found: error
+
+      - name: Upload build diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: BuildDiagnostics
+          path: ${{ steps.project.outputs.dir }}/Temp/BuildDiagnostics.log
+          if-no-files-found: ignore
